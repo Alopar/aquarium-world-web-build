@@ -110,11 +110,12 @@ bakePresetColors();
 export class DayNightSystem {
   /**
    * @param {THREE.Scene} scene
-   * @param {{ ambient: THREE.AmbientLight, sun: THREE.DirectionalLight, fill: THREE.PointLight }} lights
+   * @param {{ ambient: THREE.AmbientLight, sun: THREE.DirectionalLight, fill: THREE.PointLight, shadowsEnabled?: boolean }} lights
    */
   constructor(scene, lights) {
     this.scene = scene;
     this.lights = lights;
+    this.shadowsEnabled = lights.shadowsEnabled !== false;
     // Start in the morning so the first minutes are bright
     this.elapsed = DAY_NIGHT.cycleSeconds * 0.12;
     this.undergroundFactor = 0;
@@ -228,7 +229,10 @@ export class DayNightSystem {
     this.lights.ambient.intensity = ambientIntensity;
     this.lights.sun.color.copy(_sun);
     this.lights.sun.intensity = Math.max(0, sunIntensity);
-    this.lights.sun.castShadow = sunAltitude > 0.05 && u < 0.85 && w < 0.5;
+    this.lights.sun.castShadow = this.shadowsEnabled
+      && sunAltitude > 0.05
+      && u < 0.85
+      && w < 0.5;
     this.lights.fill.color.copy(_fill);
     this.lights.fill.intensity = fillIntensity;
 

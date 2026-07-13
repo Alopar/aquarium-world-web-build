@@ -56,7 +56,7 @@ export class App {
     this.seedInput = seedInput;
     this.isMobile = !!isMobile;
     this.hud = new GameHud(hudEl, hotbarEl, placeModeEl, healthEls, dayNightEls);
-    this.profiler = new Profiler(profilerEl);
+    this.profiler = new Profiler(profilerEl, { hidden: this.isMobile });
     this.inventoryPanel = new InventoryPanel(inventoryEl);
     this.craftingPanel = new CraftingPanel(craftingEl, { inventoryPanel: this.inventoryPanel });
     this.inventoryPanel.setDeps({ craftingPanel: this.craftingPanel });
@@ -121,10 +121,11 @@ export class App {
     this.hud.show();
     this.state = 'playing';
 
-    this.renderer = createRenderer(this.canvas);
+    const lowQuality = this.isMobile;
+    this.renderer = createRenderer(this.canvas, { lowQuality });
     this.scene = createScene();
     this.camera = createCamera();
-    const lights = createLights(this.scene);
+    const lights = createLights(this.scene, { shadows: !lowQuality });
     this.dayNight = new DayNightSystem(this.scene, lights);
 
     await loadBlockTextures();

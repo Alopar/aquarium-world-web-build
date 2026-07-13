@@ -65,9 +65,14 @@ function createGraphBlock(label, canvasId) {
 }
 
 export class Profiler {
-  constructor(rootEl) {
+  /**
+   * @param {HTMLElement} rootEl
+   * @param {{ hidden?: boolean }} [options]
+   */
+  constructor(rootEl, options = {}) {
     this.root = rootEl;
     this.mode = 'mini';
+    this.hidden = !!options.hidden;
     this.fpsAccum = 0;
     this.fpsFrameCount = 0;
     this.blockChangeAccum = 0;
@@ -92,6 +97,11 @@ export class Profiler {
 
     this.buildDom();
     this.bindKeys();
+    this.applyVisibility();
+  }
+
+  applyVisibility() {
+    this.root.classList.toggle('hidden', this.hidden);
   }
 
   buildDom() {
@@ -273,6 +283,8 @@ export class Profiler {
   }
 
   frame({ dt, updateMs, world, renderer, playerController }) {
+    if (this.hidden) return;
+
     const frameMs = dt * 1000;
 
     this.fpsAccum += dt;

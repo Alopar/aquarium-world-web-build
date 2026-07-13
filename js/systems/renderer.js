@@ -1,15 +1,21 @@
 import * as THREE from 'three';
 import { CAMERA, COLORS } from '../constants.js';
 
-export function createRenderer(canvas) {
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {{ lowQuality?: boolean }} [options]
+ */
+export function createRenderer(canvas, options = {}) {
+  const lowQuality = !!options.lowQuality;
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
+    antialias: !lowQuality,
     alpha: false,
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const maxRatio = lowQuality ? 1 : 2;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !lowQuality;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.sortObjects = true;
@@ -38,27 +44,36 @@ export function createCamera() {
   return camera;
 }
 
-export function createLights(scene) {
-  const ambient = new THREE.AmbientLight(0xb8d8ff, 0.55);
+/**
+ * @param {THREE.Scene} scene
+ * @param {{ shadows?: boolean }} [options]
+ */
+export function createLights(scene, options = {}) {
+  const shadows = options.shadows !== false;
+
+  // Slightly brighter ambient when shadows are off so terrain stays readable.
+  const ambient = new THREE.AmbientLight(0xb8d8ff, shadows ? 0.55 : 0.72);
   scene.add(ambient);
 
   const sun = new THREE.DirectionalLight(0xfff4d6, 1.1);
   sun.position.set(48, 64, 32);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 160;
-  sun.shadow.camera.left = -48;
-  sun.shadow.camera.right = 48;
-  sun.shadow.camera.top = 48;
-  sun.shadow.camera.bottom = -48;
+  sun.castShadow = shadows;
+  if (shadows) {
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 160;
+    sun.shadow.camera.left = -48;
+    sun.shadow.camera.right = 48;
+    sun.shadow.camera.top = 48;
+    sun.shadow.camera.bottom = -48;
+  }
   scene.add(sun);
 
   const fill = new THREE.PointLight(0x4aa8ff, 0.35, 80);
   fill.position.set(32, 20, 32);
   scene.add(fill);
 
-  return { ambient, sun, fill };
+  return { ambient, sun, fill, shadowsEnabled: shadows };
 }
 
 export function bindResize(renderer, camera) {

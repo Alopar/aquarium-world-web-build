@@ -2,11 +2,13 @@ import { App } from './app.js';
 import { loadStoredSeed } from './seed.js';
 import { detectMobileInput } from './systems/input-mode.js';
 import { runBootLoader } from './ui/loader.js';
+import { bindFullscreenButton } from './ui/fullscreen.js';
 
 const canvas = document.getElementById('game');
 const loaderEl = document.getElementById('loader');
 const menuEl = document.getElementById('menu');
 const startBtn = document.getElementById('btn-start');
+const fullscreenBtn = document.getElementById('btn-fullscreen');
 const seedInput = document.getElementById('seed-input');
 const hudEl = document.getElementById('hud');
 const hotbarEl = document.getElementById('hotbar');
@@ -33,6 +35,7 @@ if (isMobile) {
 }
 
 seedInput.value = String(loadStoredSeed());
+bindFullscreenButton(fullscreenBtn);
 
 await runBootLoader({ loaderEl, menuEl });
 
