@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Aquarium World</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%234a90c4'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='18' fill='%234ecdc4'%3E%E2%97%86%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./lib/three/build/three.module.js",
+      "three/addons/": "./lib/three/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="loader" class="loader">
+    <div class="loader-panel">
+      <div class="menu-ornament menu-ornament--top" aria-hidden="true">✦</div>
+      <div class="loader-scene" aria-hidden="true">
+        <div class="loader-glow"></div>
+        <div class="loader-crystal"></div>
+        <div class="loader-voxel">
+          <span class="loader-voxel__face loader-voxel__face--front"></span>
+          <span class="loader-voxel__face loader-voxel__face--back"></span>
+          <span class="loader-voxel__face loader-voxel__face--right"></span>
+          <span class="loader-voxel__face loader-voxel__face--left"></span>
+          <span class="loader-voxel__face loader-voxel__face--top"></span>
+          <span class="loader-voxel__face loader-voxel__face--bottom"></span>
+        </div>
+      </div>
+      <p class="loader-status">Загрузка...</p>
+      <div class="menu-ornament menu-ornament--bottom" aria-hidden="true">✦</div>
+    </div>
+  </div>
+
+  <div id="menu" class="screen hidden">
+    <div class="menu-bg" aria-hidden="true"></div>
+    <div class="menu-overlay" aria-hidden="true"></div>
+    <div class="menu-stars" aria-hidden="true"></div>
+    <div class="menu-panel">
+      <div class="menu-ornament menu-ornament--top" aria-hidden="true">✦</div>
+      <h1 class="menu-title">Aquarium World</h1>
+      <p class="menu-subtitle">Глубины, где свет хранит тайны</p>
+      <div class="menu-divider" aria-hidden="true"><span>◇</span></div>
+      <label class="menu-seed" for="seed-input">
+        <span class="menu-seed__label">Сид мира</span>
+        <input id="seed-input" class="menu-seed__input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false">
+      </label>
+      <button id="btn-start" class="menu-btn">Войти в глубину</button>
+      <div class="menu-ornament menu-ornament--bottom" aria-hidden="true">✦</div>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="underwater-veil" aria-hidden="true"></div>
+    <div id="day-night-clock" class="day-night-clock" aria-label="Время суток">
+      <div class="day-night-clock__dial">
+        <div class="day-night-clock__sky"></div>
+        <div class="day-night-clock__hand" id="day-night-hand">
+          <span class="day-night-clock__orb" id="day-night-orb"></span>
+        </div>
+        <div class="day-night-clock__hub"></div>
+      </div>
+      <span id="day-night-label" class="day-night-clock__label">Утро</span>
+    </div>
+    <div id="crosshair"></div>
+    <div id="health-bar" class="health-bar" aria-label="Здоровье">
+      <div class="health-bar__track">
+        <div id="health-bar-fill" class="health-bar__fill"></div>
+      </div>
+      <span id="health-bar-label" class="health-bar__label">100</span>
+    </div>
+    <div id="hotbar"></div>
+    <p id="hud-place-mode" class="hud-place-mode">ПКМ: ставить блок</p>
+    <p id="hud-hint">ЛКМ — сломать · ПКМ — поставить/бросить · Q — режим · E — инвентарь · C — крафт · WASD — полёт · Space — вверх · Ctrl — вниз · P — профайлер</p>
+    <div id="profiler" class="profiler profiler--mini"></div>
+  </div>
+
+  <div id="inventory-panel" class="hidden" aria-hidden="true"></div>
+  <div id="crafting-panel" class="hidden" aria-hidden="true"></div>
+
+  <div id="mobile-controls" class="mobile-controls hidden" aria-hidden="true">
+    <div class="mobile-stick" id="mobile-move-stick" aria-label="Движение">
+      <div class="mobile-stick__ring"></div>
+      <div class="mobile-stick__knob" id="mobile-move-knob"></div>
+    </div>
+    <div class="mobile-look" id="mobile-look-pad" aria-label="Обзор"></div>
+    <div class="mobile-actions" id="mobile-actions">
+      <button type="button" class="mobile-btn mobile-btn--dig" data-action="dig" aria-label="Сломать">Лом</button>
+      <button type="button" class="mobile-btn mobile-btn--use" data-action="use" aria-label="Использовать">Исп</button>
+      <button type="button" class="mobile-btn mobile-btn--jump" data-action="jump" aria-label="Прыжок">Прыг</button>
+      <button type="button" class="mobile-btn mobile-btn--crouch" data-action="crouch" aria-label="Вниз">Вниз</button>
+      <button type="button" class="mobile-btn mobile-btn--sprint" data-action="sprint" aria-label="Бег">Бег</button>
+    </div>
+    <div class="mobile-toolbar" id="mobile-toolbar">
+      <button type="button" class="mobile-tool" data-action="inventory">Инв</button>
+      <button type="button" class="mobile-tool" data-action="craft">Крафт</button>
+      <button type="button" class="mobile-tool" data-action="mode">Режим</button>
+      <button type="button" class="mobile-tool" data-action="fly">Полёт</button>
+    </div>
+  </div>
+
+  <div id="orientation-gate" class="orientation-gate hidden" aria-hidden="true">
+    <div class="orientation-gate__panel">
+      <div class="orientation-gate__device" aria-hidden="true">
+        <span class="orientation-gate__phone"></span>
+        <span class="orientation-gate__arrow"></span>
+      </div>
+      <p class="orientation-gate__title">Переверните экран</p>
+      <p class="orientation-gate__text">Для игры нужен альбомный режим</p>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
