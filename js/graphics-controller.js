@@ -1,6 +1,7 @@
 import { FLUID, GAS } from './constants.js';
 import { setAquariumTankGlassMode } from './world/glass-tank.js';
 import { applyUserFog, clampFogViewDistance } from './systems/fog-controller.js';
+import { applyAquariumDecorEnabled } from './systems/aquarium-decor.js';
 import {
   DESKTOP_QUALITY,
   MOBILE_QUALITY,
@@ -23,6 +24,10 @@ export function applyGraphicsSettings(app, patch) {
   }
   const next = { ...prev, ...patchNorm };
   const world = app.world;
+
+  if (next.aquariumDecorEnabled !== prev.aquariumDecorEnabled) {
+    applyAquariumDecorEnabled(app, next.aquariumDecorEnabled);
+  }
 
   if (next.rainEnabled !== prev.rainEnabled && app.weather) {
     app.weather.rainEnabled = next.rainEnabled;
@@ -64,6 +69,18 @@ export function applyGraphicsSettings(app, patch) {
 
   if (next.simpleSmokeRender !== prev.simpleSmokeRender && world?.gasMeshBuilder) {
     world.gasMeshBuilder.setSimpleRender(next.simpleSmokeRender);
+  }
+
+  if (next.chunkMeshMerge !== prev.chunkMeshMerge && app.meshMerge) {
+    app.meshMerge.setEnabled(next.chunkMeshMerge !== false, world?.meshBuilder);
+  }
+
+  if (
+    (next.flatColorsTerrain !== prev.flatColorsTerrain
+      || next.lambertTerrain !== prev.lambertTerrain)
+    && app.meshMerge
+  ) {
+    app.meshMerge.splitAll(world?.meshBuilder);
   }
 
   if (

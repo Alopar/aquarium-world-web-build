@@ -173,6 +173,8 @@ export class Profiler {
           ['Чанки', 'prof-chunks'],
           ['Очередь чанков', 'prof-dirty'],
           ['Meshes', 'prof-meshes'],
+          ['Merged 2³', 'prof-merged'],
+          ['Merged tris', 'prof-merged-tris'],
           ['Vertices', 'prof-vertices'],
           ['Triangles (mesh)', 'prof-mesh-tris'],
           ['Пересобрано/кадр', 'prof-rebuilt'],
@@ -275,7 +277,7 @@ export class Profiler {
     if (el) el.textContent = text;
   }
 
-  frame({ dt, updateMs, world, renderer, playerController }) {
+  frame({ dt, updateMs, world, renderer, playerController, meshMerge }) {
     const frameMs = dt * 1000;
 
     this.fpsAccum += dt;
@@ -291,6 +293,7 @@ export class Profiler {
 
     const worldStats = world?.getStats() ?? {};
     const meshStats = world?.meshBuilder?.getStats() ?? {};
+    const mergeStats = meshMerge?.getStats() ?? {};
     const grid = world?.grid;
     const gridCapacity = grid ? grid.size.x * grid.size.y * grid.size.z : 0;
 
@@ -360,6 +363,8 @@ export class Profiler {
     this.setText('prof-chunks', formatNum(meshStats.chunkCount ?? 0));
     this.setText('prof-dirty', formatNum(meshStats.dirtyChunks ?? 0));
     this.setText('prof-meshes', formatNum(meshStats.meshCount ?? 0));
+    this.setText('prof-merged', formatNum(mergeStats.merged ?? 0));
+    this.setText('prof-merged-tris', formatNum(mergeStats.triangles ?? 0));
     this.setText('prof-vertices', formatNum(meshStats.vertices ?? 0));
     this.setText('prof-mesh-tris', formatNum(meshStats.triangles ?? 0));
     this.setText('prof-rebuilt', formatNum(meshStats.chunksRebuiltLastFrame ?? 0));

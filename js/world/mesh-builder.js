@@ -10,7 +10,6 @@ import {
 
 const ATLAS_KEY = '__atlas__';
 const FLAT_OPAQUE_KEY = '__flat_opaque__';
-const FLAT_TRANSPARENT_KEY = '__flat_transparent__';
 
 const FACE_DEFS = [
   { dir: [1, 0, 0], normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], uv: (x, y, z, c) => [y + c[1], z + c[2]] },
@@ -41,13 +40,8 @@ function shouldRenderFace(grid, x, y, z, nx, ny, nz) {
   return !isOpaque(neighborId);
 }
 
-function isTransparentSolid(matDef) {
-  if (matDef.opaque === false) return true;
-  return matDef.opacity != null && matDef.opacity < 1;
-}
-
-function flatBucketKey(matDef) {
-  return isTransparentSolid(matDef) ? FLAT_TRANSPARENT_KEY : FLAT_OPAQUE_KEY;
+function flatBucketKey(_matDef) {
+  return FLAT_OPAQUE_KEY;
 }
 
 function vertexColorFromMaterial(matDef) {
@@ -313,6 +307,25 @@ function buildTexturedChunkBuffers(grid, cx, cy, cz, chunkSize, atlasEligible = 
   return buffers;
 }
 
+function createMeshFromBuffer(buf, key, threeMaterials, name) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(buf.positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buf.normals, 3));
+  if (buf.flat) {
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(buf.colors, 3));
+  } else {
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uvs, 2));
+  }
+  geometry.setIndex(buf.indices);
+  geometry.computeBoundingSphere();
+
+  const mesh = new THREE.Mesh(geometry, threeMaterials.get(key));
+  mesh.castShadow = !buf.flat;
+  mesh.receiveShadow = !buf.flat;
+  mesh.name = name;
+  return mesh;
+}
+
 function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz, chunkSize) {
   for (const mesh of chunk.meshes.values()) {
     mesh.geometry.dispose();
@@ -323,24 +336,7 @@ function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz, chunkSi
   for (const [key, buf] of buffers) {
     if (buf.positions.length === 0) continue;
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(buf.positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buf.normals, 3));
-    if (buf.flat) {
-      geometry.setAttribute('color', new THREE.Float32BufferAttribute(buf.colors, 3));
-    } else {
-      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uvs, 2));
-    }
-    geometry.setIndex(buf.indices);
-    geometry.computeBoundingSphere();
-
-    const mesh = new THREE.Mesh(geometry, threeMaterials.get(key));
-    mesh.castShadow = !buf.flat;
-    mesh.receiveShadow = !buf.flat;
-    mesh.name = `chunk-${cx},${cy},${cz}-${key}`;
-    if (key === FLAT_TRANSPARENT_KEY) {
-      mesh.renderOrder = 1;
-    }
+    const mesh = createMeshFromBuffer(buf, key, threeMaterials, `chunk-${cx},${cy},${cz}-${key}`);
     chunk.meshes.set(key, mesh);
     chunk.group.add(mesh);
   }
@@ -379,6 +375,10 @@ export class MeshBuilder {
     this._statsCache = null;
     this._statsCacheFrame = 0;
     this._statsFrameCounter = 0;
+    /** @type {((cx: number, cy: number, cz: number) => void) | null} */
+    this.onChunkDirty = null;
+    /** @type {((cx: number, cy: number, cz: number) => void) | null} */
+    this.onChunkRebuilt = null;
 
     const { x: sx, y: sy, z: sz } = grid.size;
     this.chunksX = Math.ceil(sx / chunkSize);
@@ -401,13 +401,6 @@ export class MeshBuilder {
     if (this.flatColors) {
       this.threeMaterials.set(FLAT_OPAQUE_KEY, new THREE.MeshLambertMaterial({
         vertexColors: true,
-      }));
-      this.threeMaterials.set(FLAT_TRANSPARENT_KEY, new THREE.MeshLambertMaterial({
-        vertexColors: true,
-        transparent: true,
-        opacity: 1,
-        depthWrite: false,
-        side: THREE.DoubleSide,
       }));
       this._atlasEligibleId = () => false;
       return;
@@ -502,6 +495,7 @@ export class MeshBuilder {
     if (cx < 0 || cy < 0 || cz < 0) return;
     if (cx >= this.chunksX || cy >= this.chunksY || cz >= this.chunksZ) return;
     this.dirtyChunks.add(chunkKey(cx, cy, cz));
+    this.onChunkDirty?.(cx, cy, cz);
   }
 
   scheduleFlush() {
@@ -569,6 +563,95 @@ export class MeshBuilder {
       ? buildGreedyFlatChunkBuffers(this.grid, cx, cy, cz, this.chunkSize)
       : buildTexturedChunkBuffers(this.grid, cx, cy, cz, this.chunkSize, this._atlasEligibleId);
     applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz, this.chunkSize);
+    this.onChunkRebuilt?.(cx, cy, cz);
+  }
+
+  getPrimaryMergeKey() {
+    return this.flatColors ? FLAT_OPAQUE_KEY : ATLAS_KEY;
+  }
+
+  /**
+   * Build primary (atlas / flat opaque) buffers for a super-region of span×span×span chunks.
+   * @param {number} scx super-chunk index (corner chunk = scx * span)
+   */
+  buildPrimaryRegionBuffers(scx, scy, scz, span) {
+    const cornerCx = scx * span;
+    const cornerCy = scy * span;
+    const cornerCz = scz * span;
+    const regionSize = this.chunkSize * span;
+    const buffers = this.flatColors
+      ? buildGreedyFlatChunkBuffers(this.grid, cornerCx, cornerCy, cornerCz, regionSize)
+      : buildTexturedChunkBuffers(
+        this.grid,
+        cornerCx,
+        cornerCy,
+        cornerCz,
+        regionSize,
+        this._atlasEligibleId,
+      );
+    const key = this.getPrimaryMergeKey();
+    return { key, buffer: buffers.get(key) ?? null };
+  }
+
+  /** True when region has no materials that must stay on per-chunk meshes. */
+  isRegionMergeable(scx, scy, scz, span) {
+    const cornerCx = scx * span;
+    const cornerCy = scy * span;
+    const cornerCz = scz * span;
+    if (cornerCx + span > this.chunksX
+      || cornerCy + span > this.chunksY
+      || cornerCz + span > this.chunksZ) {
+      return false;
+    }
+
+    const x0 = cornerCx * this.chunkSize;
+    const y0 = cornerCy * this.chunkSize;
+    const z0 = cornerCz * this.chunkSize;
+    const x1 = Math.min(x0 + this.chunkSize * span, this.grid.size.x);
+    const y1 = Math.min(y0 + this.chunkSize * span, this.grid.size.y);
+    const z1 = Math.min(z0 + this.chunkSize * span, this.grid.size.z);
+
+    for (let x = x0; x < x1; x++) {
+      for (let y = y0; y < y1; y++) {
+        for (let z = z0; z < z1; z++) {
+          const id = this.grid.get(x, y, z);
+          const matDef = getMaterial(id);
+          if (!matDef.solid) continue;
+          if (!this.flatColors && !this._atlasEligibleId(id)) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  setChunkPrimaryMeshVisible(cx, cy, cz, visible) {
+    const chunk = this.chunks.get(chunkKey(cx, cy, cz));
+    if (!chunk) return;
+    const mesh = chunk.meshes.get(this.getPrimaryMergeKey());
+    if (mesh) mesh.visible = visible;
+  }
+
+  createPrimaryMeshFromBuffer(buf, scx, scy, scz, span) {
+    const key = this.getPrimaryMergeKey();
+    return createMeshFromBuffer(
+      buf,
+      key,
+      this.threeMaterials,
+      `super-${scx},${scy},${scz}-${key}`,
+    );
+  }
+
+  getSuperRegionBox(scx, scy, scz, span) {
+    const s = this.chunkSize * VOXEL_SIZE;
+    const cx = scx * span;
+    const cy = scy * span;
+    const cz = scz * span;
+    return {
+      min: [cx * s, cy * s, cz * s],
+      max: [(cx + span) * s, (cy + span) * s, (cz + span) * s],
+    };
   }
 
   rebuildAll() {
@@ -592,6 +675,7 @@ export class MeshBuilder {
 
     for (const chunk of this.chunks.values()) {
       for (const mesh of chunk.meshes.values()) {
+        if (!mesh.visible) continue;
         meshCount++;
         const geo = mesh.geometry;
         const posCount = geo.attributes.position?.count ?? 0;

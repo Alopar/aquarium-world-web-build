@@ -83,6 +83,13 @@ export class BlockLightSystem {
     }
   }
 
+  resyncFromGrid(grid) {
+    this.clear();
+    for (const { x, y, z } of grid.entries()) {
+      this.syncAt(grid, x, y, z);
+    }
+  }
+
   dispose() {
     this.clear();
     for (const light of this.pool) {

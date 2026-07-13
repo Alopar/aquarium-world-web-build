@@ -243,7 +243,7 @@ export class DayNightSystem {
     setFluidLightUniforms(_sunDir, _sun, sunIntensity, _ambient, ambientIntensity);
 
     // Cosmic backdrop only near glass walls on the surface
-    if (spaceSky?.mesh && (u > 0.45 || w > 0.35)) {
+    if (spaceSky?.decorEnabled && spaceSky.mesh && (u > 0.45 || w > 0.35)) {
       spaceSky.mesh.visible = false;
     }
   }

@@ -34,7 +34,9 @@ import { WeatherSystem } from './systems/weather-system.js';
 import { resolveWorldSeed, storeSeed } from './seed.js';
 import { createQualitySettings } from './quality-settings.js';
 import { ChunkVisibilitySystem } from './systems/chunk-visibility.js';
+import { MeshMergeSystem } from './systems/mesh-merge.js';
 import { applyUserFog } from './systems/fog-controller.js';
+import { applyAquariumDecorEnabled } from './systems/aquarium-decor.js';
 
 export class App {
   constructor({
@@ -101,6 +103,7 @@ export class App {
     this.gasSystem = null;
     this.world = null;
     this.chunkVisibility = new ChunkVisibilitySystem();
+    this.meshMerge = new MeshMergeSystem();
     this.running = false;
 
     this.onCanvasClick = () => {
@@ -267,6 +270,9 @@ export class App {
     // Warm MeshStandard shaders with the fixed block-light pool so placing
     // lumen mid-game does not trigger a WebGL program recompile hitch.
     this.renderer.compile(this.scene, this.camera);
+    this.meshMerge.attach(this.world.meshBuilder);
+    this.meshMerge.setEnabled(this.quality.chunkMeshMerge !== false, this.world.meshBuilder);
+    applyAquariumDecorEnabled(this, this.quality.aquariumDecorEnabled !== false);
     this.chunkVisibility.update(this.camera, this.world, this.quality, { force: true });
     this.running = true;
     this.clock.start();
@@ -300,6 +306,8 @@ export class App {
     this.blockInteraction?.updateHighlight(this.scene);
     this.particleSystem?.update(dt);
     this.chunkVisibility?.update(this.camera, this.world, this.quality);
+    this.meshMerge?.syncVisibility(this.world?.meshBuilder);
+    this.meshMerge?.update(this.world?.meshBuilder, this.quality);
     const updateMs = performance.now() - t0;
 
     this.renderer.render(this.scene, this.camera);
@@ -310,6 +318,7 @@ export class App {
       world: this.world,
       renderer: this.renderer,
       playerController: this.playerController,
+      meshMerge: this.meshMerge,
     });
   }
 
@@ -338,6 +347,7 @@ export class App {
     this.hud.dispose();
     this.profiler.dispose();
     this.graphicsPanel?.dispose();
+    this.meshMerge?.dispose(this.world?.meshBuilder);
     this.renderer?.dispose();
   }
 }

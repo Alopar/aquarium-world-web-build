@@ -5,6 +5,7 @@ const STORAGE_KEY = 'aquarium-graphics-v1';
 
 export const DESKTOP_QUALITY = {
   lowQuality: false,
+  aquariumDecorEnabled: true,
   rainEnabled: true,
   fluidTicksPerFrame: FLUID.maxTicksPerFrame,
   gasTicksPerFrame: GAS.maxTicksPerFrame,
@@ -18,10 +19,12 @@ export const DESKTOP_QUALITY = {
   chunkOcclusionCull: true,
   fogEnabled: false,
   fogViewDistance: FOG_VIEW.default,
+  chunkMeshMerge: true,
 };
 
 export const MOBILE_QUALITY = {
   lowQuality: true,
+  aquariumDecorEnabled: true,
   rainEnabled: false,
   fluidTicksPerFrame: 0,
   gasTicksPerFrame: 0,
@@ -35,10 +38,16 @@ export const MOBILE_QUALITY = {
   chunkOcclusionCull: true,
   fogEnabled: false,
   fogViewDistance: 45,
+  chunkMeshMerge: true,
 };
 
 /** UI metadata for the graphics panel. */
 export const GRAPHICS_OPTIONS = [
+  {
+    key: 'aquariumDecorEnabled',
+    label: 'Стекло и skybox',
+    hint: 'Выкл — только мир (воксели + фон суток)',
+  },
   {
     key: 'rainEnabled',
     label: 'Дождь',
@@ -71,7 +80,7 @@ export const GRAPHICS_OPTIONS = [
   {
     key: 'flatColorsTerrain',
     label: 'Flat colors + greedy mesh',
-    hint: 'Без текстур, 2 материала на чанк',
+    hint: 'Без текстур, 1 opaque Lambert на чанк',
   },
   {
     key: 'foliageEnabled',
@@ -97,6 +106,11 @@ export const GRAPHICS_OPTIONS = [
     key: 'chunkOcclusionCull',
     label: 'Occlusion (voxel DDA)',
     hint: '5 лучей на верх чанка, раз в 2 кадра',
+  },
+  {
+    key: 'chunkMeshMerge',
+    label: 'Склейка чанков (2³)',
+    hint: 'Greedy super-mesh, меньше draw/tri',
   },
   {
     key: 'fogEnabled',

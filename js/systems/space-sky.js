@@ -123,11 +123,24 @@ export class SpaceSky {
     this.mesh.name = 'space-sky';
     this.mesh.renderOrder = -1000;
     scene.add(this.mesh);
+    this.decorEnabled = true;
+  }
+
+  setDecorEnabled(enabled) {
+    this.decorEnabled = enabled !== false;
+    if (!this.decorEnabled) {
+      this.mesh.visible = false;
+    }
   }
 
   update(camera) {
     this.material.uniforms.uCameraPos.value.copy(camera.position);
     this.mesh.position.copy(camera.position);
+
+    if (!this.decorEnabled) {
+      this.mesh.visible = false;
+      return;
+    }
 
     const dist = distanceToGlass(camera.position, this.bounds);
     this.mesh.visible = dist < SPACE_SKY.fadeStart;
