@@ -210,6 +210,12 @@ export const MESH_MERGE = {
   maxPerFrame: 1,
 };
 
+/** Flat vertex colors: шахматное осветление/затемнение по (x+y+z). */
+export const FLAT_CHECKER = {
+  lightMul: 1.07,
+  darkMul: 0.93,
+};
+
 export const PARTICLES = {
   blockBreak: {
     count: 16,

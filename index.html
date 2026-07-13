@@ -95,13 +95,16 @@
       <div class="mobile-stick__ring"></div>
       <div class="mobile-stick__knob" id="mobile-move-knob"></div>
     </div>
-    <div class="mobile-look" id="mobile-look-pad" aria-label="Обзор"></div>
-    <div class="mobile-actions" id="mobile-actions">
-      <button type="button" class="mobile-btn mobile-btn--dig" data-action="dig" aria-label="Сломать">Лом</button>
-      <button type="button" class="mobile-btn mobile-btn--use" data-action="use" aria-label="Использовать">Исп</button>
-      <button type="button" class="mobile-btn mobile-btn--jump" data-action="jump" aria-label="Прыжок">Прыг</button>
-      <button type="button" class="mobile-btn mobile-btn--crouch" data-action="crouch" aria-label="Вниз">Вниз</button>
-      <button type="button" class="mobile-btn mobile-btn--sprint" data-action="sprint" aria-label="Бег">Бег</button>
+    <div class="mobile-right-cluster">
+      <div class="mobile-action-select" id="mobile-action-select" role="group" aria-label="Действия">
+        <button type="button" class="mobile-action-btn mobile-action-btn--dig" data-action="dig" aria-pressed="false" aria-label="Сломать">Лом</button>
+        <button type="button" class="mobile-action-btn mobile-action-btn--jump" data-action="jump" aria-pressed="false" aria-label="Прыжок">Прыг</button>
+        <button type="button" class="mobile-action-btn mobile-action-btn--use" data-action="use" aria-pressed="false" aria-label="Использовать">Исп</button>
+      </div>
+      <div class="mobile-stick mobile-stick--look" id="mobile-look-stick" aria-label="Обзор">
+        <div class="mobile-stick__ring"></div>
+        <div class="mobile-stick__knob" id="mobile-look-knob"></div>
+      </div>
     </div>
     <div class="mobile-toolbar" id="mobile-toolbar">
       <button type="button" class="mobile-tool" data-action="inventory">Инв</button>

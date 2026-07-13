@@ -294,6 +294,7 @@ export class App {
     this.world?.gasMeshBuilder?.update(dt, this.camera);
     this.world?.grassFoliageBuilder?.update(dt);
     this.playerController?.update(dt);
+    this.mobileControls?.tick(dt);
     this.playerHealth?.update(dt);
     this.projectileSystem?.update(dt);
     this.lootSystem?.update(dt);

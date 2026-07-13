@@ -80,7 +80,7 @@ export const GRAPHICS_OPTIONS = [
   {
     key: 'flatColorsTerrain',
     label: 'Flat colors + greedy mesh',
-    hint: 'Без текстур, 1 opaque Lambert на чанк',
+    hint: 'Без текстур, 1 Lambert + шахматка вершин',
   },
   {
     key: 'foliageEnabled',

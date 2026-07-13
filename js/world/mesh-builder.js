@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, MAX_CHUNKS_REBUILD_PER_FRAME, VOXEL_SIZE } from '../constants.js';
+import { CHUNK_SIZE, FLAT_CHECKER, MAX_CHUNKS_REBUILD_PER_FRAME, VOXEL_SIZE } from '../constants.js';
 import { getMaterial, isOpaque, listSolidMaterials } from '../materials/registry.js';
 import {
   buildSolidAtlas,
@@ -44,10 +44,25 @@ function flatBucketKey(_matDef) {
   return FLAT_OPAQUE_KEY;
 }
 
-function vertexColorFromMaterial(matDef) {
+function vertexColorFromMaterial(matDef, checkerParity = 0) {
   const hex = matDef.emissive ?? matDef.color ?? 0xffffff;
   const c = new THREE.Color(hex);
-  return [c.r, c.g, c.b];
+  const mul = checkerParity === 0 ? FLAT_CHECKER.lightMul : FLAT_CHECKER.darkMul;
+  return [
+    Math.min(1, c.r * mul),
+    Math.min(1, c.g * mul),
+    Math.min(1, c.b * mul),
+  ];
+}
+
+function parseFlatMaskKey(maskKey) {
+  const first = maskKey.indexOf(':');
+  const last = maskKey.lastIndexOf(':');
+  return {
+    bufKey: maskKey.slice(0, first),
+    id: maskKey.slice(first + 1, last),
+    checkerParity: Number(maskKey.slice(last + 1)),
+  };
 }
 
 function createMeshMaterial(materialDef, useLambert = false) {
@@ -179,7 +194,8 @@ function buildGreedyFlatChunkBuffers(grid, cx, cy, cz, chunkSize) {
           const matDef = getMaterial(id);
           if (!matDef.solid) continue;
           const bucket = flatBucketKey(matDef);
-          mask[u + v * du] = `${bucket}:${id}`;
+          const parity = (x + y + z) & 1;
+          mask[u + v * du] = `${bucket}:${id}:${parity}`;
         }
       }
 
@@ -207,12 +223,10 @@ function buildGreedyFlatChunkBuffers(grid, cx, cy, cz, chunkSize) {
             }
           }
 
-          const colon = maskKey.indexOf(':');
-          const bufKey = maskKey.slice(0, colon);
-          const id = maskKey.slice(colon + 1);
+          const { bufKey, id, checkerParity } = parseFlatMaskKey(maskKey);
           const matDef = getMaterial(id);
           const buf = getOrCreateBuffer(buffers, bufKey, true);
-          const color = vertexColorFromMaterial(matDef);
+          const color = vertexColorFromMaterial(matDef, checkerParity);
           const bases = [x0, y0, z0];
           const uOrigin = bases[uAxis] + u;
           const vOrigin = bases[vAxis] + v;

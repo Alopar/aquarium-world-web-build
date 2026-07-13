@@ -1,9 +1,13 @@
-const LOOK_SENSITIVITY = 0.0032;
+const LOOK_STICK_SPEED = 2.6;
+const MOVE_TURN_SPEED = 2.4;
 const STICK_DEADZONE = 0.22;
+const TAP_MOVE_THRESHOLD = 14;
+const TAP_TIME_THRESHOLD = 300;
 
 /**
  * On-screen twin-stick + action buttons for touch devices.
- * Writes into PlayerController.keys / look and BlockInteraction dig/use.
+ * Left stick: forward/back + gradual yaw turn (no strafe).
+ * Right stick: camera look; tap fires the selected action button.
  */
 export class MobileControls {
   constructor(root, { playerController, blockInteraction, inventoryPanel, craftingPanel, graphicsPanel } = {}) {
@@ -16,16 +20,23 @@ export class MobileControls {
 
     this.moveStick = root.querySelector('#mobile-move-stick');
     this.moveKnob = root.querySelector('#mobile-move-knob');
-    this.lookPad = root.querySelector('#mobile-look-pad');
-    this.actionsEl = root.querySelector('#mobile-actions');
+    this.lookStick = root.querySelector('#mobile-look-stick');
+    this.lookKnob = root.querySelector('#mobile-look-knob');
+    this.actionSelectEl = root.querySelector('#mobile-action-select');
     this.toolbarEl = root.querySelector('#mobile-toolbar');
 
     this._moveId = null;
+    this._moveDx = 0;
+    this._moveDy = 0;
     this._lookId = null;
-    this._lookLast = null;
+    this._lookDx = 0;
+    this._lookDy = 0;
+    this._lookTapStart = null;
+    this._lookMoved = false;
     this._heldKeys = new Set();
     this._digTimer = null;
     this._useTimer = null;
+    this._selectedAction = null;
     this._visible = false;
 
     this._onMoveStart = this.onMoveStart.bind(this);
@@ -39,7 +50,7 @@ export class MobileControls {
     this._onToolbarClick = this.onToolbarClick.bind(this);
 
     this.moveStick?.addEventListener('pointerdown', this._onMoveStart);
-    this.lookPad?.addEventListener('pointerdown', this._onLookStart);
+    this.lookStick?.addEventListener('pointerdown', this._onLookStart);
     window.addEventListener('pointermove', this._onMoveMove);
     window.addEventListener('pointermove', this._onLookMove);
     window.addEventListener('pointerup', this._onMoveEnd);
@@ -47,10 +58,10 @@ export class MobileControls {
     window.addEventListener('pointerup', this._onLookEnd);
     window.addEventListener('pointercancel', this._onLookEnd);
 
-    this.actionsEl?.addEventListener('pointerdown', this._onActionDown);
-    this.actionsEl?.addEventListener('pointerup', this._onActionUp);
-    this.actionsEl?.addEventListener('pointercancel', this._onActionUp);
-    this.actionsEl?.addEventListener('pointerleave', this._onActionUp);
+    this.actionSelectEl?.addEventListener('pointerdown', this._onActionDown);
+    this.actionSelectEl?.addEventListener('pointerup', this._onActionUp);
+    this.actionSelectEl?.addEventListener('pointercancel', this._onActionUp);
+    this.actionSelectEl?.addEventListener('pointerleave', this._onActionUp);
     this.toolbarEl?.addEventListener('click', this._onToolbarClick);
   }
 
@@ -91,8 +102,7 @@ export class MobileControls {
 
   resetInput() {
     this.clearMove();
-    this._lookId = null;
-    this._lookLast = null;
+    this.clearLook();
     this.releaseHeldKeys();
     this.stopRepeat('_digTimer');
     this.stopRepeat('_useTimer');
@@ -123,6 +133,116 @@ export class MobileControls {
     }
   }
 
+  selectAction(action) {
+    this._selectedAction = action;
+    this.actionSelectEl?.querySelectorAll('[data-action]').forEach((btn) => {
+      const active = btn.dataset.action === action;
+      btn.classList.toggle('mobile-action-btn--selected', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  readStickDeflection(stickEl, e) {
+    const rect = stickEl.getBoundingClientRect();
+    const cx = rect.left + rect.width * 0.5;
+    const cy = rect.top + rect.height * 0.5;
+    const radius = rect.width * 0.5;
+    let dx = (e.clientX - cx) / radius;
+    let dy = (e.clientY - cy) / radius;
+    const len = Math.hypot(dx, dy);
+    if (len > 1) {
+      dx /= len;
+      dy /= len;
+    }
+    return { dx, dy, radius };
+  }
+
+  positionKnob(knobEl, dx, dy, radius) {
+    if (!knobEl) return;
+    const knobR = radius * 0.42;
+    knobEl.style.transform = `translate(calc(-50% + ${dx * knobR}px), calc(-50% + ${dy * knobR}px))`;
+  }
+
+  fireAction(action, { momentary = false, repeat = false } = {}) {
+    if (!this._visible || this.blockInteraction?.inputBlocked) return;
+
+    if (action === 'jump') {
+      this.holdKey('Space', true);
+      if (momentary) {
+        window.setTimeout(() => this.holdKey('Space', false), 80);
+      }
+    } else if (action === 'dig') {
+      this.blockInteraction?.dig?.();
+      if (repeat) {
+        this.stopRepeat('_digTimer');
+        this._digTimer = setInterval(() => {
+          if (this.blockInteraction?.inputBlocked) {
+            this.stopRepeat('_digTimer');
+            return;
+          }
+          this.blockInteraction?.dig?.();
+        }, 220);
+      }
+    } else if (action === 'use') {
+      this.blockInteraction?.useSelected?.();
+      if (repeat) {
+        this.stopRepeat('_useTimer');
+        this._useTimer = setInterval(() => {
+          if (this.blockInteraction?.inputBlocked) {
+            this.stopRepeat('_useTimer');
+            return;
+          }
+          this.blockInteraction?.useSelected?.();
+        }, 280);
+      }
+    }
+  }
+
+  releaseAction(action) {
+    if (action === 'jump') this.holdKey('Space', false);
+    if (action === 'dig') this.stopRepeat('_digTimer');
+    if (action === 'use') this.stopRepeat('_useTimer');
+  }
+
+  tick(dt) {
+    if (!this._visible || !this.playerController || this.blockInteraction?.inputBlocked) return;
+
+    if (this._moveId != null) {
+      const dx = this._moveDx;
+      const dy = this._moveDy;
+      const mag = Math.hypot(dx, dy);
+      if (mag >= STICK_DEADZONE) {
+        const turnX = Math.abs(dx) > STICK_DEADZONE * 0.35 ? dx : 0;
+        if (turnX) {
+          this.playerController.applyLookDelta(turnX * MOVE_TURN_SPEED * dt, 0);
+        }
+
+        const back = dy > STICK_DEADZONE * 0.35;
+        const forward = !back && (
+          -dy > STICK_DEADZONE * 0.35 || Math.abs(dx) > STICK_DEADZONE * 0.35
+        );
+
+        this.playerController.setKey('KeyW', forward);
+        this.playerController.setKey('KeyS', back);
+        this.playerController.setKey('KeyA', false);
+        this.playerController.setKey('KeyD', false);
+      } else {
+        this.playerController.setKey('KeyW', false);
+        this.playerController.setKey('KeyS', false);
+      }
+    }
+
+    if (this._lookId != null) {
+      const mag = Math.hypot(this._lookDx, this._lookDy);
+      if (mag >= STICK_DEADZONE) {
+        this.playerController.applyLookDelta(
+          this._lookDx * LOOK_STICK_SPEED * dt,
+          this._lookDy * LOOK_STICK_SPEED * dt,
+        );
+      }
+    }
+  }
+
   onMoveStart(e) {
     if (!this._visible || this.blockInteraction?.inputBlocked) return;
     if (this._moveId != null) return;
@@ -144,37 +264,16 @@ export class MobileControls {
   }
 
   updateMove(e) {
-    const rect = this.moveStick.getBoundingClientRect();
-    const cx = rect.left + rect.width * 0.5;
-    const cy = rect.top + rect.height * 0.5;
-    const radius = rect.width * 0.5;
-    let dx = (e.clientX - cx) / radius;
-    let dy = (e.clientY - cy) / radius;
-    const len = Math.hypot(dx, dy);
-    if (len > 1) {
-      dx /= len;
-      dy /= len;
-    }
-
-    const knobR = radius * 0.42;
-    if (this.moveKnob) {
-      this.moveKnob.style.transform = `translate(calc(-50% + ${dx * knobR}px), calc(-50% + ${dy * knobR}px))`;
-    }
-
-    const mag = Math.hypot(dx, dy);
-    const forward = mag >= STICK_DEADZONE && -dy > STICK_DEADZONE * 0.55;
-    const back = mag >= STICK_DEADZONE && dy > STICK_DEADZONE * 0.55;
-    const left = mag >= STICK_DEADZONE && -dx > STICK_DEADZONE * 0.55;
-    const right = mag >= STICK_DEADZONE && dx > STICK_DEADZONE * 0.55;
-
-    this.playerController?.setKey?.('KeyW', forward);
-    this.playerController?.setKey?.('KeyS', back);
-    this.playerController?.setKey?.('KeyA', left);
-    this.playerController?.setKey?.('KeyD', right);
+    const { dx, dy, radius } = this.readStickDeflection(this.moveStick, e);
+    this._moveDx = dx;
+    this._moveDy = dy;
+    this.positionKnob(this.moveKnob, dx, dy, radius);
   }
 
   clearMove() {
     this._moveId = null;
+    this._moveDx = 0;
+    this._moveDy = 0;
     if (this.moveKnob) {
       this.moveKnob.style.transform = 'translate(-50%, -50%)';
     }
@@ -188,79 +287,82 @@ export class MobileControls {
     if (!this._visible || this.blockInteraction?.inputBlocked) return;
     if (this._lookId != null) return;
     e.preventDefault();
-    this.lookPad.setPointerCapture?.(e.pointerId);
+    this.lookStick.setPointerCapture?.(e.pointerId);
     this._lookId = e.pointerId;
-    this._lookLast = { x: e.clientX, y: e.clientY };
+    this._lookTapStart = { x: e.clientX, y: e.clientY, time: performance.now() };
+    this._lookMoved = false;
+    this.updateLook(e);
   }
 
   onLookMove(e) {
-    if (e.pointerId !== this._lookId || !this._lookLast) return;
+    if (e.pointerId !== this._lookId) return;
     e.preventDefault();
-    const dx = e.clientX - this._lookLast.x;
-    const dy = e.clientY - this._lookLast.y;
-    this._lookLast = { x: e.clientX, y: e.clientY };
-    this.playerController?.applyLookDelta?.(dx * LOOK_SENSITIVITY, dy * LOOK_SENSITIVITY);
+    if (this._lookTapStart) {
+      const dist = Math.hypot(
+        e.clientX - this._lookTapStart.x,
+        e.clientY - this._lookTapStart.y,
+      );
+      if (dist > TAP_MOVE_THRESHOLD) this._lookMoved = true;
+    }
+    this.updateLook(e);
   }
 
   onLookEnd(e) {
     if (e.pointerId !== this._lookId) return;
+
+    if (
+      !this._lookMoved
+      && this._lookTapStart
+      && this._selectedAction
+      && performance.now() - this._lookTapStart.time < TAP_TIME_THRESHOLD
+    ) {
+      this.fireAction(this._selectedAction, { momentary: true });
+    }
+
+    this.clearLook();
+  }
+
+  updateLook(e) {
+    const { dx, dy, radius } = this.readStickDeflection(this.lookStick, e);
+    this._lookDx = dx;
+    this._lookDy = dy;
+    this.positionKnob(this.lookKnob, dx, dy, radius);
+  }
+
+  clearLook() {
     this._lookId = null;
-    this._lookLast = null;
+    this._lookDx = 0;
+    this._lookDy = 0;
+    this._lookTapStart = null;
+    this._lookMoved = false;
+    if (this.lookKnob) {
+      this.lookKnob.style.transform = 'translate(-50%, -50%)';
+    }
   }
 
   onActionDown(e) {
     const btn = e.target.closest('[data-action]');
     if (!btn || !this._visible || this.blockInteraction?.inputBlocked) return;
     e.preventDefault();
-    const action = btn.dataset.action;
 
-    if (action === 'jump') {
-      this.holdKey('Space', true);
-    } else if (action === 'crouch') {
-      this.holdKey('ControlLeft', true);
-    } else if (action === 'sprint') {
-      this.holdKey('ShiftLeft', true);
-    } else if (action === 'dig') {
-      this.blockInteraction?.dig?.();
-      this.stopRepeat('_digTimer');
-        this._digTimer = setInterval(() => {
-          if (this.blockInteraction?.inputBlocked) {
-            this.stopRepeat('_digTimer');
-            return;
-          }
-          this.blockInteraction?.dig?.();
-        }, 220);
-    } else if (action === 'use') {
-      this.blockInteraction?.useSelected?.();
-      this.stopRepeat('_useTimer');
-      this._useTimer = setInterval(() => {
-        if (this.blockInteraction?.inputBlocked) {
-          this.stopRepeat('_useTimer');
-          return;
-        }
-        this.blockInteraction?.useSelected?.();
-      }, 280);
-    }
+    const action = btn.dataset.action;
+    this.selectAction(action);
+    this.fireAction(action, { repeat: action === 'dig' || action === 'use' });
   }
 
   onActionUp(e) {
     const btn = e.target.closest?.('[data-action]');
     const action = btn?.dataset?.action;
-    if (e.type === 'pointerleave' && e.currentTarget === this.actionsEl) {
-      this.holdKey('Space', false);
-      this.holdKey('ControlLeft', false);
-      this.holdKey('ShiftLeft', false);
+
+    if (e.type === 'pointerleave' && e.currentTarget === this.actionSelectEl) {
+      this.releaseHeldKeys();
       this.stopRepeat('_digTimer');
       this.stopRepeat('_useTimer');
       return;
     }
-    if (!action) return;
 
-    if (action === 'jump') this.holdKey('Space', false);
-    if (action === 'crouch') this.holdKey('ControlLeft', false);
-    if (action === 'sprint') this.holdKey('ShiftLeft', false);
-    if (action === 'dig') this.stopRepeat('_digTimer');
-    if (action === 'use') this.stopRepeat('_useTimer');
+    if (!action) return;
+    this.releaseAction(action);
   }
 
   onToolbarClick(e) {
@@ -287,17 +389,17 @@ export class MobileControls {
   dispose() {
     this.hide();
     this.moveStick?.removeEventListener('pointerdown', this._onMoveStart);
-    this.lookPad?.removeEventListener('pointerdown', this._onLookStart);
+    this.lookStick?.removeEventListener('pointerdown', this._onLookStart);
     window.removeEventListener('pointermove', this._onMoveMove);
     window.removeEventListener('pointermove', this._onLookMove);
     window.removeEventListener('pointerup', this._onMoveEnd);
     window.removeEventListener('pointercancel', this._onMoveEnd);
     window.removeEventListener('pointerup', this._onLookEnd);
     window.removeEventListener('pointercancel', this._onLookEnd);
-    this.actionsEl?.removeEventListener('pointerdown', this._onActionDown);
-    this.actionsEl?.removeEventListener('pointerup', this._onActionUp);
-    this.actionsEl?.removeEventListener('pointercancel', this._onActionUp);
-    this.actionsEl?.removeEventListener('pointerleave', this._onActionUp);
+    this.actionSelectEl?.removeEventListener('pointerdown', this._onActionDown);
+    this.actionSelectEl?.removeEventListener('pointerup', this._onActionUp);
+    this.actionSelectEl?.removeEventListener('pointercancel', this._onActionUp);
+    this.actionSelectEl?.removeEventListener('pointerleave', this._onActionUp);
     this.toolbarEl?.removeEventListener('click', this._onToolbarClick);
   }
 }

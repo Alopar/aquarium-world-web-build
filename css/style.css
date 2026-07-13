@@ -1645,30 +1645,34 @@ body.is-mobile #hotbar {
   pointer-events: none;
 }
 
-.mobile-look {
+.mobile-stick--look {
+  position: relative;
+  left: auto;
+  bottom: auto;
+}
+
+.mobile-right-cluster {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 48%;
-  height: 62%;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  display: grid;
+  grid-template-columns: auto 118px;
+  align-items: end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.mobile-action-select {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   pointer-events: auto;
   touch-action: none;
 }
 
-.mobile-actions {
-  position: absolute;
-  right: max(14px, env(safe-area-inset-right, 0px));
-  bottom: max(18px, env(safe-area-inset-bottom, 0px));
-  width: 150px;
-  height: 150px;
-  pointer-events: auto;
-  touch-action: none;
-}
-
-.mobile-btn {
-  position: absolute;
-  width: 56px;
-  height: 56px;
+.mobile-action-btn {
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   border: 1px solid rgba(155, 127, 212, 0.45);
   background: rgba(14, 10, 28, 0.72);
@@ -1681,40 +1685,51 @@ body.is-mobile #hotbar {
   backdrop-filter: blur(6px);
   box-shadow: 0 0 16px rgba(155, 127, 212, 0.12);
   -webkit-tap-highlight-color: transparent;
+  touch-action: none;
 }
 
-.mobile-btn:active {
+.mobile-action-btn:active {
   border-color: var(--accent);
   background: rgba(78, 205, 196, 0.22);
 }
 
-.mobile-btn--dig {
-  right: 0;
-  top: 0;
+.mobile-action-btn--selected {
+  border-color: var(--accent);
+  background: rgba(78, 205, 196, 0.28);
+  color: var(--accent);
+  box-shadow: 0 0 18px rgba(78, 205, 196, 0.35);
 }
 
-.mobile-btn--use {
-  right: 0;
-  bottom: 0;
+.mobile-action-btn--dig {
+  border-color: rgba(220, 120, 120, 0.5);
+}
+
+.mobile-action-btn--dig.mobile-action-btn--selected {
+  border-color: rgba(255, 140, 140, 0.85);
+  background: rgba(220, 80, 80, 0.28);
+  color: #ffb0b0;
+}
+
+.mobile-action-btn--use {
   border-color: rgba(201, 168, 76, 0.45);
 }
 
-.mobile-btn--jump {
-  left: 0;
-  top: 8px;
+.mobile-action-btn--use.mobile-action-btn--selected {
+  border-color: rgba(230, 200, 100, 0.85);
+  background: rgba(201, 168, 76, 0.25);
+  color: #f0d878;
 }
 
-.mobile-btn--crouch {
-  left: 0;
-  bottom: 8px;
+.mobile-right-cluster .mobile-stick {
+  pointer-events: auto;
 }
 
-.mobile-btn--sprint {
-  left: 48px;
-  top: 48px;
-  width: 48px;
-  height: 48px;
-  font-size: 10px;
+.mobile-look {
+  display: none;
+}
+
+.mobile-actions {
+  display: none;
 }
 
 .mobile-toolbar {
