@@ -31,6 +31,7 @@ import { GasSystem } from './gases/gas-system.js';
 import { DayNightSystem } from './systems/day-night.js';
 import { WeatherSystem } from './systems/weather-system.js';
 import { resolveWorldSeed, storeSeed } from './seed.js';
+import { createQualitySettings } from './quality-settings.js';
 
 export class App {
   constructor({
@@ -55,6 +56,7 @@ export class App {
     this.startBtn = startBtn;
     this.seedInput = seedInput;
     this.isMobile = !!isMobile;
+    this.quality = createQualitySettings(this.isMobile);
     this.hud = new GameHud(hudEl, hotbarEl, placeModeEl, healthEls, dayNightEls);
     this.profiler = new Profiler(profilerEl);
     this.inventoryPanel = new InventoryPanel(inventoryEl);
@@ -124,7 +126,7 @@ export class App {
     this.hud.show();
     this.state = 'playing';
 
-    const lowQuality = this.isMobile;
+    const lowQuality = this.quality.lowQuality;
     this.renderer = createRenderer(this.canvas, { lowQuality });
     this.scene = createScene();
     this.camera = createCamera();
@@ -133,7 +135,7 @@ export class App {
 
     await loadBlockTextures();
 
-    this.world = new AquariumWorld(this.scene);
+    this.world = new AquariumWorld(this.scene, { quality: this.quality });
     this.world.createTank();
     const seed = resolveWorldSeed(this.seedInput.value);
     storeSeed(seed);
@@ -146,9 +148,13 @@ export class App {
     this.treeGrowth = new TreeGrowthSystem(this.world);
     this.world.setTreeGrowth(this.treeGrowth);
     this.treeGrowth.loadPlans(treePlans);
-    this.fluidSystem = new FluidSystem(this.world);
+    this.fluidSystem = new FluidSystem(this.world, {
+      maxTicksPerFrame: this.quality.fluidTicksPerFrame,
+    });
     this.world.setFluidSystem(this.fluidSystem);
-    this.gasSystem = new GasSystem(this.world);
+    this.gasSystem = new GasSystem(this.world, {
+      maxTicksPerFrame: this.quality.gasTicksPerFrame,
+    });
     this.world.setGasSystem(this.gasSystem);
     this.playerController = new PlayerController(
       this.camera,
@@ -159,7 +165,10 @@ export class App {
     );
     this.playerHealth = new PlayerHealth(this.playerController, this.sound);
     this.spaceSky = await SpaceSky.create(this.scene);
-    this.weather = new WeatherSystem(this.world, this.scene, this.particleSystem, this.sound);
+    this.weather = new WeatherSystem(this.world, this.scene, this.particleSystem, this.sound, {
+      rainEnabled: this.quality.rainEnabled,
+      rainDropCount: this.quality.rainDropCount,
+    });
     this.inventory = new Inventory();
     this.playerHealth.setInventory(this.inventory);
     this.blockInteraction = new BlockInteraction(

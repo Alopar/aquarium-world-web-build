@@ -39,8 +39,9 @@ export class FluidSystem {
   /**
    * @param {import('../world/world.js').AquariumWorld} world
    */
-  constructor(world) {
+  constructor(world, { maxTicksPerFrame = FLUID.maxTicksPerFrame } = {}) {
     this.world = world;
+    this.maxTicksPerFrame = maxTicksPerFrame;
     /** @type {Set<string>} */
     this.active = new Set();
     /** @type {Set<string>} cells allowed to sideways-flow despite calm bands */
@@ -107,6 +108,8 @@ export class FluidSystem {
   }
 
   update(dt) {
+    if (this.maxTicksPerFrame <= 0) return;
+
     this.accumulator += dt;
     this.rescanAccumulator += dt;
 
@@ -122,14 +125,14 @@ export class FluidSystem {
     }
 
     let ticks = 0;
-    while (this.accumulator >= this.tickInterval && ticks < FLUID.maxTicksPerFrame) {
+    while (this.accumulator >= this.tickInterval && ticks < this.maxTicksPerFrame) {
       this.accumulator -= this.tickInterval;
       this.step();
       ticks++;
     }
 
-    if (this.accumulator > this.tickInterval * FLUID.maxTicksPerFrame) {
-      this.accumulator = this.tickInterval * FLUID.maxTicksPerFrame;
+    if (this.accumulator > this.tickInterval * this.maxTicksPerFrame) {
+      this.accumulator = this.tickInterval * this.maxTicksPerFrame;
     }
 
     if (this.rescanAccumulator >= FLUID.rescanInterval) {

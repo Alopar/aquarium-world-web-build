@@ -75,11 +75,15 @@ export class WeatherSystem {
    * @param {import('./particle-system.js').ParticleSystem | null} particleSystem
    * @param {import('./sound.js').SoundSystem | null} sound
    */
-  constructor(world, scene, particleSystem = null, sound = null) {
+  constructor(world, scene, particleSystem = null, sound = null, {
+    rainEnabled = true,
+    rainDropCount = WEATHER.dropCount,
+  } = {}) {
     this.world = world;
     this.scene = scene;
     this.particleSystem = particleSystem;
     this.sound = sound;
+    this.rainEnabled = rainEnabled;
 
     this.isRaining = false;
     /** Первый дождь через ~25 с, дальше полный цикл dry/rain. */
@@ -93,7 +97,7 @@ export class WeatherSystem {
     this.group.name = 'rain';
     scene.add(this.group);
 
-    this.dropCount = WEATHER.dropCount;
+    this.dropCount = rainDropCount;
     this.positions = new Float32Array(this.dropCount * 6);
     this.speeds = new Float32Array(this.dropCount);
     this.alive = new Uint8Array(this.dropCount);
@@ -126,6 +130,12 @@ export class WeatherSystem {
    * @param {import('./day-night.js').DayNightSystem | null} dayNight
    */
   update(dt, player = null, dayNight = null) {
+    if (!this.rainEnabled) {
+      this.group.visible = false;
+      this.sound?.setRainLevel?.(0);
+      return;
+    }
+
     this.timer -= dt;
     if (this.timer <= 0) {
       this.isRaining = !this.isRaining;

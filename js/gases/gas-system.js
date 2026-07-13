@@ -28,8 +28,9 @@ export class GasSystem {
   /**
    * @param {import('../world/world.js').AquariumWorld} world
    */
-  constructor(world) {
+  constructor(world, { maxTicksPerFrame = GAS.maxTicksPerFrame } = {}) {
     this.world = world;
+    this.maxTicksPerFrame = maxTicksPerFrame;
     /** @type {Set<string>} */
     this.active = new Set();
     /** @type {Set<string>} */
@@ -83,6 +84,8 @@ export class GasSystem {
   }
 
   update(dt) {
+    if (this.maxTicksPerFrame <= 0) return;
+
     this.accumulator += dt;
     this.rescanAccumulator += dt;
     this.dissolveAccumulator += dt;
@@ -93,14 +96,14 @@ export class GasSystem {
     }
 
     let ticks = 0;
-    while (this.accumulator >= this.tickInterval && ticks < GAS.maxTicksPerFrame) {
+    while (this.accumulator >= this.tickInterval && ticks < this.maxTicksPerFrame) {
       this.accumulator -= this.tickInterval;
       this.step();
       ticks++;
     }
 
-    if (this.accumulator > this.tickInterval * GAS.maxTicksPerFrame) {
-      this.accumulator = this.tickInterval * GAS.maxTicksPerFrame;
+    if (this.accumulator > this.tickInterval * this.maxTicksPerFrame) {
+      this.accumulator = this.tickInterval * this.maxTicksPerFrame;
     }
 
     if (this.rescanAccumulator >= GAS.rescanInterval) {

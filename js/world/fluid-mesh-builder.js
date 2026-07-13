@@ -248,11 +248,13 @@ export class FluidMeshBuilder {
   constructor(grid, fluidField, {
     chunkSize = CHUNK_SIZE,
     maxChunksPerFrame = MAX_CHUNKS_REBUILD_PER_FRAME,
+    enabled = true,
   } = {}) {
     this.grid = grid;
     this.fluidField = fluidField;
     this.chunkSize = chunkSize;
     this.maxChunksPerFrame = maxChunksPerFrame;
+    this.enabled = enabled;
     this.group = new THREE.Group();
     this.group.name = 'fluid-meshes';
     this.chunks = new Map();
@@ -267,17 +269,24 @@ export class FluidMeshBuilder {
     this.chunksY = Math.ceil(sy / chunkSize);
     this.chunksZ = Math.ceil(sz / chunkSize);
 
+    if (!this.enabled) {
+      this.group.visible = false;
+      return;
+    }
+
     for (const mat of listLiquidMaterials()) {
       this.threeMaterials.set(mat.id, createFluidShaderMaterial(mat));
     }
   }
 
   update(dt) {
+    if (!this.enabled) return;
     this.elapsed += dt;
     updateFluidShaderTime(this.elapsed);
   }
 
   markDirtyAt(x, y, z) {
+    if (!this.enabled) return;
     const s = this.chunkSize;
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
@@ -299,6 +308,7 @@ export class FluidMeshBuilder {
   }
 
   scheduleFlush() {
+    if (!this.enabled) return;
     if (this.flushScheduled) return;
     this.flushScheduled = true;
     this.flushFrameId = requestAnimationFrame(() => this.flush());
@@ -313,6 +323,7 @@ export class FluidMeshBuilder {
   }
 
   flush(maxPerFrame = this.maxChunksPerFrame) {
+    if (!this.enabled) return;
     this.flushScheduled = false;
     this.flushFrameId = null;
 
@@ -355,6 +366,7 @@ export class FluidMeshBuilder {
   }
 
   rebuildAll() {
+    if (!this.enabled) return;
     this.cancelScheduledFlush();
     this.dirtyChunks.clear();
 

@@ -7,28 +7,43 @@ export function getTankBounds(size = AQUARIUM_SIZE, voxelSize = VOXEL_SIZE) {
   return { minX: 0, maxX: sx, minZ: 0, maxZ: sz, minY: 0 };
 }
 
-export function createAquariumTank(scene, size = AQUARIUM_SIZE) {
+export function createAquariumTank(scene, size = AQUARIUM_SIZE, { simpleGlass = false } = {}) {
   const group = new THREE.Group();
   group.name = 'aquarium-tank';
 
-  const wallMaterial = new THREE.MeshPhysicalMaterial({
-    color: 0x88ccff,
-    transparent: true,
-    opacity: 0.22,
-    roughness: 0.04,
-    metalness: 0.05,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
+  const wallMaterial = simpleGlass
+    ? new THREE.MeshBasicMaterial({
+      color: 0x88ccff,
+      transparent: true,
+      opacity: 0.22,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+    : new THREE.MeshPhysicalMaterial({
+      color: 0x88ccff,
+      transparent: true,
+      opacity: 0.22,
+      roughness: 0.04,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
 
-  const floorMaterial = new THREE.MeshStandardMaterial({
-    color: 0x1a3050,
-    roughness: 0.9,
-    metalness: 0.05,
-    transparent: true,
-    opacity: 0.85,
-    depthWrite: false,
-  });
+  const floorMaterial = simpleGlass
+    ? new THREE.MeshBasicMaterial({
+      color: 0x1a3050,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    })
+    : new THREE.MeshStandardMaterial({
+      color: 0x1a3050,
+      roughness: 0.9,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    });
 
   const sx = size.x * VOXEL_SIZE;
   const sy = size.y * VOXEL_SIZE;

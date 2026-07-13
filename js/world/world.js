@@ -14,15 +14,20 @@ import { GrassFoliageBuilder } from './grass-foliage-builder.js';
 import { BlockLightSystem } from '../systems/block-lights.js';
 
 export class AquariumWorld {
-  constructor(scene) {
+  constructor(scene, { quality = {} } = {}) {
     this.scene = scene;
+    this.quality = quality;
     this.grid = new VoxelGrid(AQUARIUM_SIZE);
     this.fluidField = new FluidField();
     this.gasField = new GasField();
-    this.meshBuilder = new MeshBuilder(this.grid);
-    this.fluidMeshBuilder = new FluidMeshBuilder(this.grid, this.fluidField);
+    this.meshBuilder = new MeshBuilder(this.grid, { lambertTerrain: !!quality.lambertTerrain });
+    this.fluidMeshBuilder = new FluidMeshBuilder(this.grid, this.fluidField, {
+      enabled: quality.fluidMeshEnabled !== false,
+    });
     this.gasMeshBuilder = new GasMeshBuilder(this.grid, this.gasField);
-    this.grassFoliageBuilder = new GrassFoliageBuilder(this.grid);
+    this.grassFoliageBuilder = new GrassFoliageBuilder(this.grid, {
+      enabled: quality.foliageEnabled !== false,
+    });
     this.blockLights = new BlockLightSystem(scene);
     this.tank = null;
     this.blockSupport = null;
@@ -34,14 +39,20 @@ export class AquariumWorld {
 
     this.grid.onChange = (x, y, z) => {
       this.meshBuilder.markDirtyAt(x, y, z);
-      this.fluidMeshBuilder.markDirtyAt(x, y, z);
+      if (this.fluidMeshBuilder.enabled) {
+        this.fluidMeshBuilder.markDirtyAt(x, y, z);
+      }
       this.gasMeshBuilder.markDirtyAt(x, y, z);
-      this.grassFoliageBuilder.markDirtyAt(x, y, z);
+      if (this.grassFoliageBuilder.enabled) {
+        this.grassFoliageBuilder.markDirtyAt(x, y, z);
+      }
       this.blockLights.syncAt(this.grid, x, y, z);
     };
 
     this.fluidField.onChange = (x, y, z) => {
-      this.fluidMeshBuilder.markDirtyAt(x, y, z);
+      if (this.fluidMeshBuilder.enabled) {
+        this.fluidMeshBuilder.markDirtyAt(x, y, z);
+      }
     };
 
     this.gasField.onChange = (x, y, z) => {
@@ -49,9 +60,13 @@ export class AquariumWorld {
     };
 
     scene.add(this.meshBuilder.group);
-    scene.add(this.fluidMeshBuilder.group);
+    if (this.fluidMeshBuilder.enabled) {
+      scene.add(this.fluidMeshBuilder.group);
+    }
     scene.add(this.gasMeshBuilder.group);
-    scene.add(this.grassFoliageBuilder.group);
+    if (this.grassFoliageBuilder.enabled) {
+      scene.add(this.grassFoliageBuilder.group);
+    }
   }
 
   setFluidSystem(system) {
@@ -79,7 +94,9 @@ export class AquariumWorld {
   }
 
   createTank() {
-    this.tank = createAquariumTank(this.scene, this.grid.size);
+    this.tank = createAquariumTank(this.scene, this.grid.size, {
+      simpleGlass: !!this.quality.simpleGlass,
+    });
   }
 
   setBlockSupport(system) {

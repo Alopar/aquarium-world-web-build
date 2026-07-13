@@ -117,10 +117,12 @@ export class GrassFoliageBuilder {
   constructor(grid, {
     chunkSize = CHUNK_SIZE,
     maxChunksPerFrame = MAX_CHUNKS_REBUILD_PER_FRAME,
+    enabled = true,
   } = {}) {
     this.grid = grid;
     this.chunkSize = chunkSize;
     this.maxChunksPerFrame = maxChunksPerFrame;
+    this.enabled = enabled;
     this.group = new THREE.Group();
     this.group.name = 'grass-foliage';
     this.chunks = new Map();
@@ -128,6 +130,16 @@ export class GrassFoliageBuilder {
     this.flushScheduled = false;
     this.flushFrameId = null;
     this.chunksRebuiltLastFrame = 0;
+
+    const { x: sx, y: sy, z: sz } = grid.size;
+    this.chunksX = Math.ceil(sx / chunkSize);
+    this.chunksY = Math.ceil(sy / chunkSize);
+    this.chunksZ = Math.ceil(sz / chunkSize);
+
+    if (!this.enabled) {
+      this.group.visible = false;
+      return;
+    }
 
     this.grassGeometry = createCrossGeometry(GRASS_FOLIAGE.width, GRASS_FOLIAGE.height);
     this.flowerGeometry = createCrossGeometry(FLOWER_FOLIAGE.width, FLOWER_FOLIAGE.height);
@@ -145,15 +157,11 @@ export class GrassFoliageBuilder {
       );
     }
 
-    const { x: sx, y: sy, z: sz } = grid.size;
-    this.chunksX = Math.ceil(sx / chunkSize);
-    this.chunksY = Math.ceil(sy / chunkSize);
-    this.chunksZ = Math.ceil(sz / chunkSize);
-
     this._dummy = new THREE.Object3D();
   }
 
   markDirtyAt(x, y, z) {
+    if (!this.enabled) return;
     const s = this.chunkSize;
     const cx = Math.floor(x / s);
     const cy = Math.floor(y / s);
@@ -182,6 +190,7 @@ export class GrassFoliageBuilder {
   }
 
   scheduleFlush() {
+    if (!this.enabled) return;
     if (this.flushScheduled) return;
     this.flushScheduled = true;
     this.flushFrameId = requestAnimationFrame(() => this.flush());
@@ -196,6 +205,7 @@ export class GrassFoliageBuilder {
   }
 
   flush(maxPerFrame = this.maxChunksPerFrame) {
+    if (!this.enabled) return;
     this.flushScheduled = false;
     this.flushFrameId = null;
     this.chunksRebuiltLastFrame = 0;
@@ -323,6 +333,7 @@ export class GrassFoliageBuilder {
   }
 
   rebuildAll() {
+    if (!this.enabled) return;
     this.cancelScheduledFlush();
     this.dirtyChunks.clear();
 
@@ -336,6 +347,7 @@ export class GrassFoliageBuilder {
   }
 
   update(dt) {
+    if (!this.enabled) return;
     updateGrassShaderTime(dt);
   }
 
@@ -347,6 +359,8 @@ export class GrassFoliageBuilder {
       this.clearChunkMeshes(chunk);
     }
     this.chunks.clear();
+
+    if (!this.enabled) return;
 
     this.grassGeometry.dispose();
     this.flowerGeometry.dispose();

@@ -30,13 +30,12 @@ function shouldRenderFace(grid, x, y, z, nx, ny, nz) {
   return !isOpaque(neighborId);
 }
 
-function createMeshMaterial(materialDef) {
+function createMeshMaterial(materialDef, useLambert = false) {
   const texture = materialDef.texture ? getBlockTexture(materialDef.texture) : null;
   const params = {
     color: texture ? 0xffffff : materialDef.color,
     transparent: materialDef.opacity != null && materialDef.opacity < 1,
     opacity: materialDef.opacity ?? 1,
-    roughness: 0.92,
   };
   if (texture) {
     params.map = texture;
@@ -45,6 +44,10 @@ function createMeshMaterial(materialDef) {
     params.emissive = materialDef.emissive;
     params.emissiveIntensity = materialDef.emissiveIntensity ?? 0.6;
   }
+  if (useLambert) {
+    return new THREE.MeshLambertMaterial(params);
+  }
+  params.roughness = 0.92;
   return new THREE.MeshStandardMaterial(params);
 }
 
@@ -170,10 +173,12 @@ export class MeshBuilder {
   constructor(grid, {
     chunkSize = CHUNK_SIZE,
     maxChunksPerFrame = MAX_CHUNKS_REBUILD_PER_FRAME,
+    lambertTerrain = false,
   } = {}) {
     this.grid = grid;
     this.chunkSize = chunkSize;
     this.maxChunksPerFrame = maxChunksPerFrame;
+    this.lambertTerrain = lambertTerrain;
     this.group = new THREE.Group();
     this.group.name = 'voxel-meshes';
     this.chunks = new Map();
@@ -196,11 +201,13 @@ export class MeshBuilder {
 
     const atlasTex = getSolidAtlasTexture();
     if (atlasTex) {
-      const atlasMat = new THREE.MeshStandardMaterial({
-        map: atlasTex,
-        color: 0xffffff,
-        roughness: 0.92,
-      });
+      const atlasMat = this.lambertTerrain
+        ? new THREE.MeshLambertMaterial({ map: atlasTex, color: 0xffffff })
+        : new THREE.MeshStandardMaterial({
+          map: atlasTex,
+          color: 0xffffff,
+          roughness: 0.92,
+        });
       this.threeMaterials.set(ATLAS_KEY, atlasMat);
     }
 
@@ -214,7 +221,7 @@ export class MeshBuilder {
 
     for (const mat of solids) {
       if (isAtlasEligible(mat)) continue;
-      this.threeMaterials.set(mat.id, createMeshMaterial(mat));
+      this.threeMaterials.set(mat.id, createMeshMaterial(mat, this.lambertTerrain));
     }
 
     this._atlasEligibleId = (id) => {
