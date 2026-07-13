@@ -125,10 +125,19 @@ export class GraphicsPanel {
       const input = this.toggleInputs.get(opt.key);
       if (input) input.checked = isOptionChecked(quality, opt);
     }
+    const lambertInput = this.toggleInputs.get('lambertTerrain');
+    if (lambertInput) {
+      const flatOn = !!quality.flatColorsTerrain;
+      lambertInput.disabled = flatOn;
+      lambertInput.closest('.graphics-panel__row')?.classList.toggle('graphics-panel__row--disabled', flatOn);
+    }
   }
 
   onToggle(key, checked) {
     if (!this.app) return;
+    if (key === 'flatColorsTerrain' && checked) {
+      setGraphicsOption(this.app, 'lambertTerrain', false);
+    }
     setGraphicsOption(this.app, key, checked);
     this.syncFromQuality();
   }

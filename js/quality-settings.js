@@ -9,8 +9,10 @@ export const DESKTOP_QUALITY = {
   gasTicksPerFrame: GAS.maxTicksPerFrame,
   simpleGlass: false,
   lambertTerrain: false,
+  flatColorsTerrain: false,
   foliageEnabled: true,
   fluidMeshEnabled: true,
+  simpleSmokeRender: false,
 };
 
 export const MOBILE_QUALITY = {
@@ -20,8 +22,10 @@ export const MOBILE_QUALITY = {
   gasTicksPerFrame: 0,
   simpleGlass: true,
   lambertTerrain: true,
+  flatColorsTerrain: true,
   foliageEnabled: false,
   fluidMeshEnabled: false,
+  simpleSmokeRender: true,
 };
 
 /** UI metadata for the graphics panel. */
@@ -53,7 +57,12 @@ export const GRAPHICS_OPTIONS = [
   {
     key: 'lambertTerrain',
     label: 'Lambert-материалы мира',
-    hint: 'Проще Standard PBR',
+    hint: 'Проще Standard PBR (только текстуры)',
+  },
+  {
+    key: 'flatColorsTerrain',
+    label: 'Flat colors + greedy mesh',
+    hint: 'Без текстур, 2 материала на чанк',
   },
   {
     key: 'foliageEnabled',
@@ -64,6 +73,11 @@ export const GRAPHICS_OPTIONS = [
     key: 'fluidMeshEnabled',
     label: 'Отрисовка воды',
     hint: 'Fluid shader на GPU',
+  },
+  {
+    key: 'simpleSmokeRender',
+    label: 'Простой дым (блоки)',
+    hint: 'Вместо volumetric raymarch',
   },
 ];
 

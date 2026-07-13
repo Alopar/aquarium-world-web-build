@@ -20,11 +20,16 @@ export class AquariumWorld {
     this.grid = new VoxelGrid(AQUARIUM_SIZE);
     this.fluidField = new FluidField();
     this.gasField = new GasField();
-    this.meshBuilder = new MeshBuilder(this.grid, { lambertTerrain: !!quality.lambertTerrain });
+    this.meshBuilder = new MeshBuilder(this.grid, {
+      lambertTerrain: !!quality.lambertTerrain,
+      flatColors: !!quality.flatColorsTerrain,
+    });
     this.fluidMeshBuilder = new FluidMeshBuilder(this.grid, this.fluidField, {
       enabled: quality.fluidMeshEnabled !== false,
     });
-    this.gasMeshBuilder = new GasMeshBuilder(this.grid, this.gasField);
+    this.gasMeshBuilder = new GasMeshBuilder(this.grid, this.gasField, {
+      simpleRender: !!quality.simpleSmokeRender,
+    });
     this.grassFoliageBuilder = new GrassFoliageBuilder(this.grid, {
       enabled: quality.foliageEnabled !== false,
     });

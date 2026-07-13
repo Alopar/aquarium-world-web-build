@@ -9,6 +9,8 @@ import {
 } from '../materials/textures.js';
 
 const ATLAS_KEY = '__atlas__';
+const FLAT_OPAQUE_KEY = '__flat_opaque__';
+const FLAT_TRANSPARENT_KEY = '__flat_transparent__';
 
 const FACE_DEFS = [
   { dir: [1, 0, 0], normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], uv: (x, y, z, c) => [y + c[1], z + c[2]] },
@@ -17,6 +19,15 @@ const FACE_DEFS = [
   { dir: [0, -1, 0], normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], uv: (x, y, z, c) => [x + c[0], z + c[2]] },
   { dir: [0, 0, 1], normal: [0, 0, 1], corners: [[1, 0, 1], [1, 1, 1], [0, 1, 1], [0, 0, 1]], uv: (x, y, z, c) => [x + c[0], y + c[1]] },
   { dir: [0, 0, -1], normal: [0, 0, -1], corners: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]], uv: (x, y, z, c) => [x + c[0], y + c[1]] },
+];
+
+const GREEDY_SWEEPS = [
+  { axis: 0, dir: 1, normal: [1, 0, 0], uAxis: 1, vAxis: 2 },
+  { axis: 0, dir: -1, normal: [-1, 0, 0], uAxis: 1, vAxis: 2 },
+  { axis: 1, dir: 1, normal: [0, 1, 0], uAxis: 0, vAxis: 2 },
+  { axis: 1, dir: -1, normal: [0, -1, 0], uAxis: 0, vAxis: 2 },
+  { axis: 2, dir: 1, normal: [0, 0, 1], uAxis: 0, vAxis: 1 },
+  { axis: 2, dir: -1, normal: [0, 0, -1], uAxis: 0, vAxis: 1 },
 ];
 
 function chunkKey(cx, cy, cz) {
@@ -28,6 +39,21 @@ function shouldRenderFace(grid, x, y, z, nx, ny, nz) {
   const neighborId = grid.get(nx, ny, nz);
   if (neighborId === 'air') return true;
   return !isOpaque(neighborId);
+}
+
+function isTransparentSolid(matDef) {
+  if (matDef.opaque === false) return true;
+  return matDef.opacity != null && matDef.opacity < 1;
+}
+
+function flatBucketKey(matDef) {
+  return isTransparentSolid(matDef) ? FLAT_TRANSPARENT_KEY : FLAT_OPAQUE_KEY;
+}
+
+function vertexColorFromMaterial(matDef) {
+  const hex = matDef.emissive ?? matDef.color ?? 0xffffff;
+  const c = new THREE.Color(hex);
+  return [c.r, c.g, c.b];
 }
 
 function createMeshMaterial(materialDef, useLambert = false) {
@@ -51,9 +77,16 @@ function createMeshMaterial(materialDef, useLambert = false) {
   return new THREE.MeshStandardMaterial(params);
 }
 
-function getOrCreateBuffer(buffers, key) {
+function getOrCreateBuffer(buffers, key, flat = false) {
   if (!buffers.has(key)) {
-    buffers.set(key, { positions: [], normals: [], uvs: [], indices: [] });
+    buffers.set(key, {
+      positions: [],
+      normals: [],
+      uvs: [],
+      colors: [],
+      indices: [],
+      flat,
+    });
   }
   return buffers.get(key);
 }
@@ -65,11 +98,150 @@ function atlasUv(localU, localV, tile) {
   ];
 }
 
-/**
- * Simple per-voxel meshing (no greedy stitching).
- * Uses atlas for most solid opaque blocks to reduce draw calls.
- */
-function buildChunkBuffers(grid, cx, cy, cz, chunkSize, atlasEligible = null) {
+function pushGreedyQuad(buf, normal, color, corners) {
+  const base = buf.positions.length / 3;
+  for (const c of corners) {
+    buf.positions.push(c[0] * VOXEL_SIZE, c[1] * VOXEL_SIZE, c[2] * VOXEL_SIZE);
+    buf.normals.push(normal[0], normal[1], normal[2]);
+    buf.colors.push(color[0], color[1], color[2]);
+  }
+  buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+}
+
+function facePlaneOnAxis(axis, dir, cellCoord) {
+  return dir > 0 ? cellCoord + 1 : cellCoord;
+}
+
+function greedyQuadCorners(axis, dir, cellCoord, u0, v0, w, h) {
+  const plane = facePlaneOnAxis(axis, dir, cellCoord);
+  if (axis === 0) {
+    if (dir > 0) {
+      return [
+        [plane, u0, v0], [plane, u0 + w, v0], [plane, u0 + w, v0 + h], [plane, u0, v0 + h],
+      ];
+    }
+    return [
+      [plane, u0, v0 + h], [plane, u0 + w, v0 + h], [plane, u0 + w, v0], [plane, u0, v0],
+    ];
+  }
+  if (axis === 1) {
+    if (dir > 0) {
+      return [
+        [u0, plane, v0 + h], [u0 + w, plane, v0 + h], [u0 + w, plane, v0], [u0, plane, v0],
+      ];
+    }
+    return [
+      [u0, plane, v0], [u0 + w, plane, v0], [u0 + w, plane, v0 + h], [u0, plane, v0 + h],
+    ];
+  }
+  if (dir > 0) {
+    return [
+      [u0 + w, v0, plane], [u0 + w, v0 + h, plane], [u0, v0 + h, plane], [u0, v0, plane],
+    ];
+  }
+  // Match FACE_DEFS -Z winding: (x,y,z), (x,y+1,z), (x+1,y+1,z), (x+1,y,z)
+  return [
+    [u0, v0, plane], [u0, v0 + h, plane], [u0 + w, v0 + h, plane], [u0 + w, v0, plane],
+  ];
+}
+
+function buildGreedyFlatChunkBuffers(grid, cx, cy, cz, chunkSize) {
+  const buffers = new Map();
+  const x0 = cx * chunkSize;
+  const y0 = cy * chunkSize;
+  const z0 = cz * chunkSize;
+  const x1 = Math.min(x0 + chunkSize, grid.size.x);
+  const y1 = Math.min(y0 + chunkSize, grid.size.y);
+  const z1 = Math.min(z0 + chunkSize, grid.size.z);
+  const dims = [x1 - x0, y1 - y0, z1 - z0];
+
+  for (const sweep of GREEDY_SWEEPS) {
+    const { axis, dir, normal, uAxis, vAxis } = sweep;
+    const du = dims[uAxis];
+    const dv = dims[vAxis];
+    const sliceMin = 0;
+    const sliceMax = dims[axis];
+
+    for (let slice = sliceMin; slice < sliceMax; slice++) {
+      const mask = new Array(du * dv).fill(null);
+
+      for (let v = 0; v < dv; v++) {
+        for (let u = 0; u < du; u++) {
+          const bases = [x0, y0, z0];
+          const coords = [0, 0, 0];
+          coords[axis] = bases[axis] + slice;
+          coords[uAxis] = bases[uAxis] + u;
+          coords[vAxis] = bases[vAxis] + v;
+
+          const x = coords[0];
+          const y = coords[1];
+          const z = coords[2];
+          const nx = x + (axis === 0 ? dir : 0);
+          const ny = y + (axis === 1 ? dir : 0);
+          const nz = z + (axis === 2 ? dir : 0);
+
+          if (!shouldRenderFace(grid, x, y, z, nx, ny, nz)) continue;
+          const id = grid.get(x, y, z);
+          const matDef = getMaterial(id);
+          if (!matDef.solid) continue;
+          const bucket = flatBucketKey(matDef);
+          mask[u + v * du] = `${bucket}:${id}`;
+        }
+      }
+
+      for (let v = 0; v < dv; v++) {
+        for (let u = 0; u < du; u++) {
+          const maskKey = mask[u + v * du];
+          if (!maskKey) continue;
+
+          let width = 1;
+          while (u + width < du && mask[u + width + v * du] === maskKey) {
+            width++;
+          }
+
+          let height = 1;
+          outer: while (v + height < dv) {
+            for (let k = 0; k < width; k++) {
+              if (mask[u + k + (v + height) * du] !== maskKey) break outer;
+            }
+            height++;
+          }
+
+          for (let dv2 = 0; dv2 < height; dv2++) {
+            for (let du2 = 0; du2 < width; du2++) {
+              mask[u + du2 + (v + dv2) * du] = null;
+            }
+          }
+
+          const colon = maskKey.indexOf(':');
+          const bufKey = maskKey.slice(0, colon);
+          const id = maskKey.slice(colon + 1);
+          const matDef = getMaterial(id);
+          const buf = getOrCreateBuffer(buffers, bufKey, true);
+          const color = vertexColorFromMaterial(matDef);
+          const bases = [x0, y0, z0];
+          const uOrigin = bases[uAxis] + u;
+          const vOrigin = bases[vAxis] + v;
+          const cellCoord = bases[axis] + slice;
+          const corners = greedyQuadCorners(
+            axis,
+            dir,
+            cellCoord,
+            uOrigin,
+            vOrigin,
+            width,
+            height,
+          );
+          pushGreedyQuad(buf, normal, color, corners);
+        }
+      }
+    }
+  }
+
+  return buffers;
+}
+
+function buildTexturedChunkBuffers(grid, cx, cy, cz, chunkSize, atlasEligible = null) {
   const buffers = new Map();
   const x0 = cx * chunkSize;
   const y0 = cy * chunkSize;
@@ -111,16 +283,15 @@ function buildChunkBuffers(grid, cx, cy, cz, chunkSize, atlasEligible = null) {
             );
             buf.normals.push(...face.normal);
 
-            // Local face UVs (0..1) so atlas mapping is stable.
             let u = 0;
             let v = 0;
-            if (face.normal[0] !== 0) { // ±X: u=y, v=z
+            if (face.normal[0] !== 0) {
               u = corner[1];
               v = corner[2];
-            } else if (face.normal[1] !== 0) { // ±Y: u=x, v=z
+            } else if (face.normal[1] !== 0) {
               u = corner[0];
               v = corner[2];
-            } else { // ±Z: u=x, v=y
+            } else {
               u = corner[0];
               v = corner[1];
             }
@@ -128,7 +299,6 @@ function buildChunkBuffers(grid, cx, cy, cz, chunkSize, atlasEligible = null) {
               const [au, av] = atlasUv(u, v, tile);
               buf.uvs.push(au, av);
             } else {
-              // Per-material textures still tile in block space.
               const [du, dv] = face.uv(x, y, z, corner);
               buf.uvs.push(du, dv);
             }
@@ -156,14 +326,24 @@ function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(buf.positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buf.normals, 3));
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uvs, 2));
+    if (buf.flat) {
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(buf.colors, 3));
+    } else {
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uvs, 2));
+    }
     geometry.setIndex(buf.indices);
     geometry.computeBoundingSphere();
 
     const mesh = new THREE.Mesh(geometry, threeMaterials.get(key));
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.castShadow = !buf.flat;
+    mesh.receiveShadow = !buf.flat;
+    if (buf.flat) {
+      mesh.frustumCulled = false;
+    }
     mesh.name = `chunk-${cx},${cy},${cz}-${key}`;
+    if (key === FLAT_TRANSPARENT_KEY) {
+      mesh.renderOrder = 1;
+    }
     chunk.meshes.set(key, mesh);
     chunk.group.add(mesh);
   }
@@ -174,11 +354,13 @@ export class MeshBuilder {
     chunkSize = CHUNK_SIZE,
     maxChunksPerFrame = MAX_CHUNKS_REBUILD_PER_FRAME,
     lambertTerrain = false,
+    flatColors = false,
   } = {}) {
     this.grid = grid;
     this.chunkSize = chunkSize;
     this.maxChunksPerFrame = maxChunksPerFrame;
     this.lambertTerrain = lambertTerrain;
+    this.flatColors = flatColors;
     this.group = new THREE.Group();
     this.group.name = 'voxel-meshes';
     this.chunks = new Map();
@@ -196,12 +378,35 @@ export class MeshBuilder {
     this.chunksY = Math.ceil(sy / chunkSize);
     this.chunksZ = Math.ceil(sz / chunkSize);
 
-    const solids = listSolidMaterials();
-    buildSolidAtlas(solids);
-    this._initMaterials(solids);
+    if (!this.flatColors) {
+      const solids = listSolidMaterials();
+      buildSolidAtlas(solids);
+    }
+    this._initMaterials();
   }
 
-  _initMaterials(solids = listSolidMaterials()) {
+  _initMaterials() {
+    for (const mat of this.threeMaterials.values()) {
+      mat.dispose();
+    }
+    this.threeMaterials.clear();
+
+    if (this.flatColors) {
+      this.threeMaterials.set(FLAT_OPAQUE_KEY, new THREE.MeshLambertMaterial({
+        vertexColors: true,
+      }));
+      this.threeMaterials.set(FLAT_TRANSPARENT_KEY, new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }));
+      this._atlasEligibleId = () => false;
+      return;
+    }
+
+    const solids = listSolidMaterials();
     const atlasTex = getSolidAtlasTexture();
     if (atlasTex) {
       const atlasMat = this.lambertTerrain
@@ -234,15 +439,25 @@ export class MeshBuilder {
   }
 
   setLambertTerrain(useLambert) {
-    if (this.lambertTerrain === useLambert) return;
+    if (this.flatColors || this.lambertTerrain === useLambert) return;
     this.lambertTerrain = useLambert;
-
-    for (const mat of this.threeMaterials.values()) {
-      mat.dispose();
-    }
-    this.threeMaterials.clear();
     this._initMaterials();
+    this._clearChunkMeshes();
+    this.rebuildAll();
+  }
 
+  setFlatColors(flat) {
+    if (this.flatColors === flat) return;
+    this.flatColors = flat;
+    if (!this.flatColors) {
+      buildSolidAtlas(listSolidMaterials());
+    }
+    this._initMaterials();
+    this._clearChunkMeshes();
+    this.rebuildAll();
+  }
+
+  _clearChunkMeshes() {
     for (const chunk of this.chunks.values()) {
       for (const mesh of chunk.meshes.values()) {
         mesh.geometry.dispose();
@@ -250,7 +465,6 @@ export class MeshBuilder {
       }
       chunk.meshes.clear();
     }
-    this.rebuildAll();
   }
 
   markDirtyAt(x, y, z) {
@@ -332,7 +546,9 @@ export class MeshBuilder {
 
   rebuildChunk(cx, cy, cz) {
     const chunk = this.getOrCreateChunk(cx, cy, cz);
-    const buffers = buildChunkBuffers(this.grid, cx, cy, cz, this.chunkSize, this._atlasEligibleId);
+    const buffers = this.flatColors
+      ? buildGreedyFlatChunkBuffers(this.grid, cx, cy, cz, this.chunkSize)
+      : buildTexturedChunkBuffers(this.grid, cx, cy, cz, this.chunkSize, this._atlasEligibleId);
     applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz);
   }
 

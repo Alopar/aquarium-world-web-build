@@ -45,12 +45,20 @@ export function applyGraphicsSettings(app, patch) {
     world.meshBuilder.setLambertTerrain(next.lambertTerrain);
   }
 
+  if (next.flatColorsTerrain !== prev.flatColorsTerrain && world?.meshBuilder) {
+    world.meshBuilder.setFlatColors(next.flatColorsTerrain);
+  }
+
   if (next.foliageEnabled !== prev.foliageEnabled && world?.grassFoliageBuilder) {
     world.grassFoliageBuilder.setEnabled(next.foliageEnabled, world.scene);
   }
 
   if (next.fluidMeshEnabled !== prev.fluidMeshEnabled && world?.fluidMeshBuilder) {
     world.fluidMeshBuilder.setEnabled(next.fluidMeshEnabled, world.scene);
+  }
+
+  if (next.simpleSmokeRender !== prev.simpleSmokeRender && world?.gasMeshBuilder) {
+    world.gasMeshBuilder.setSimpleRender(next.simpleSmokeRender);
   }
 
   app.quality = next;

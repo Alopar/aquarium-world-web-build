@@ -1445,6 +1445,11 @@ body.is-mobile .menu-fullscreen {
   color: var(--text-muted);
 }
 
+.graphics-panel__row--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 .graphics-panel__presets {
   display: flex;
   flex-wrap: wrap;
