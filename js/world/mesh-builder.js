@@ -198,7 +198,10 @@ export class MeshBuilder {
 
     const solids = listSolidMaterials();
     buildSolidAtlas(solids);
+    this._initMaterials(solids);
+  }
 
+  _initMaterials(solids = listSolidMaterials()) {
     const atlasTex = getSolidAtlasTexture();
     if (atlasTex) {
       const atlasMat = this.lambertTerrain
@@ -228,6 +231,26 @@ export class MeshBuilder {
       const m = getMaterial(id);
       return isAtlasEligible(m);
     };
+  }
+
+  setLambertTerrain(useLambert) {
+    if (this.lambertTerrain === useLambert) return;
+    this.lambertTerrain = useLambert;
+
+    for (const mat of this.threeMaterials.values()) {
+      mat.dispose();
+    }
+    this.threeMaterials.clear();
+    this._initMaterials();
+
+    for (const chunk of this.chunks.values()) {
+      for (const mesh of chunk.meshes.values()) {
+        mesh.geometry.dispose();
+        chunk.group.remove(mesh);
+      }
+      chunk.meshes.clear();
+    }
+    this.rebuildAll();
   }
 
   markDirtyAt(x, y, z) {

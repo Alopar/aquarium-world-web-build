@@ -1333,6 +1333,169 @@ body.is-mobile .menu-fullscreen {
   font-size: 12px;
 }
 
+/* ── Graphics settings panel ── */
+
+.hud-graphics-btn {
+  position: absolute;
+  top: 12px;
+  left: 118px;
+  z-index: 6;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgba(232, 244, 255, 0.85);
+  background: rgba(8, 14, 28, 0.72);
+  border: 1px solid rgba(120, 180, 255, 0.25);
+  border-radius: 4px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.hud-graphics-btn:hover {
+  border-color: rgba(120, 200, 255, 0.45);
+  color: #fff;
+}
+
+.graphics-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.graphics-panel__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 6, 14, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.graphics-panel__window {
+  position: relative;
+  width: min(420px, 100%);
+  max-height: min(90vh, 640px);
+  overflow: auto;
+  padding: 18px 20px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border-mystic);
+  box-shadow:
+    0 0 40px rgba(78, 205, 196, 0.08),
+    0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.graphics-panel__title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.graphics-panel__hint {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.graphics-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graphics-panel__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(120, 180, 255, 0.1);
+  cursor: pointer;
+}
+
+.graphics-panel__row:hover {
+  border-color: rgba(120, 180, 255, 0.22);
+}
+
+.graphics-panel__checkbox {
+  margin-top: 3px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.graphics-panel__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.graphics-panel__row-label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.graphics-panel__row-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.graphics-panel__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.graphics-panel__preset-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(78, 205, 196, 0.12);
+  border: 1px solid rgba(78, 205, 196, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.graphics-panel__preset-btn:hover {
+  background: rgba(78, 205, 196, 0.2);
+}
+
+.graphics-panel__preset-btn--muted {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.graphics-panel__close {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(155, 127, 212, 0.15);
+  border: 1px solid rgba(155, 127, 212, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.graphics-panel__close:hover {
+  background: rgba(155, 127, 212, 0.25);
+}
+
+body.is-mobile .hud-graphics-btn {
+  display: none;
+}
+
+body.is-mobile #graphics-panel {
+  touch-action: pan-y;
+}
+
 /* ── Mobile controls & orientation gate ── */
 
 body.is-mobile {
@@ -1349,7 +1512,8 @@ body.is-mobile #seed-input {
 }
 
 body.is-mobile #inventory-panel,
-body.is-mobile #crafting-panel {
+body.is-mobile #crafting-panel,
+body.is-mobile #graphics-panel {
   touch-action: pan-y;
 }
 

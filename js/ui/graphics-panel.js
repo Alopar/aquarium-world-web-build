@@ -1,0 +1,190 @@
+import {
+  GRAPHICS_OPTIONS,
+  clearGraphicsOverrides,
+  createQualitySettings,
+  isTickOptionEnabled,
+} from '../quality-settings.js';
+import {
+  DESKTOP_QUALITY,
+  MOBILE_QUALITY,
+  applyGraphicsPreset,
+  setGraphicsOption,
+} from '../graphics-controller.js';
+
+const TOGGLE_KEY = 'KeyG';
+
+function isOptionChecked(quality, opt) {
+  const value = quality[opt.key];
+  if (opt.tickKey) return isTickOptionEnabled(value);
+  return !!value;
+}
+
+export class GraphicsPanel {
+  /**
+   * @param {HTMLElement} rootEl
+   * @param {import('../app.js').App} app
+   */
+  constructor(rootEl, app) {
+    this.root = rootEl;
+    this.app = app;
+    this.open = false;
+    this.toggleInputs = new Map();
+
+    this.onKeyDown = this.onKeyDown.bind(this);
+    this.build();
+    window.addEventListener('keydown', this.onKeyDown);
+  }
+
+  build() {
+    this.root.className = 'graphics-panel hidden';
+    this.root.setAttribute('aria-hidden', 'true');
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'graphics-panel__backdrop';
+    backdrop.addEventListener('click', () => this.close());
+
+    const windowEl = document.createElement('div');
+    windowEl.className = 'graphics-panel__window';
+    windowEl.addEventListener('click', (e) => e.stopPropagation());
+
+    const title = document.createElement('h2');
+    title.className = 'graphics-panel__title';
+    title.textContent = 'Графика';
+
+    const hint = document.createElement('p');
+    hint.className = 'graphics-panel__hint';
+    hint.textContent = 'G — открыть/закрыть · настройки сохраняются локально';
+
+    const list = document.createElement('div');
+    list.className = 'graphics-panel__list';
+
+    for (const opt of GRAPHICS_OPTIONS) {
+      const row = document.createElement('label');
+      row.className = 'graphics-panel__row';
+
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'graphics-panel__checkbox';
+      input.dataset.key = opt.key;
+      input.addEventListener('change', () => this.onToggle(opt.key, input.checked));
+
+      const text = document.createElement('span');
+      text.className = 'graphics-panel__row-text';
+
+      const name = document.createElement('span');
+      name.className = 'graphics-panel__row-label';
+      name.textContent = opt.label;
+
+      const sub = document.createElement('span');
+      sub.className = 'graphics-panel__row-hint';
+      sub.textContent = opt.hint;
+
+      text.append(name, sub);
+      row.append(input, text);
+      list.appendChild(row);
+      this.toggleInputs.set(opt.key, input);
+    }
+
+    const presets = document.createElement('div');
+    presets.className = 'graphics-panel__presets';
+
+    const btnDesktop = document.createElement('button');
+    btnDesktop.type = 'button';
+    btnDesktop.className = 'graphics-panel__preset-btn';
+    btnDesktop.textContent = 'ПК (макс.)';
+    btnDesktop.addEventListener('click', () => this.applyPreset(DESKTOP_QUALITY));
+
+    const btnMobile = document.createElement('button');
+    btnMobile.type = 'button';
+    btnMobile.className = 'graphics-panel__preset-btn';
+    btnMobile.textContent = 'Телефон';
+    btnMobile.addEventListener('click', () => this.applyPreset(MOBILE_QUALITY));
+
+    const btnReset = document.createElement('button');
+    btnReset.type = 'button';
+    btnReset.className = 'graphics-panel__preset-btn graphics-panel__preset-btn--muted';
+    btnReset.textContent = 'Сбросить сохранённые';
+    btnReset.addEventListener('click', () => this.resetSaved());
+
+    presets.append(btnDesktop, btnMobile, btnReset);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'graphics-panel__close';
+    closeBtn.textContent = 'Закрыть';
+    closeBtn.addEventListener('click', () => this.close());
+
+    windowEl.append(title, hint, list, presets, closeBtn);
+    this.root.append(backdrop, windowEl);
+  }
+
+  syncFromQuality() {
+    const quality = this.app?.quality;
+    if (!quality) return;
+    for (const opt of GRAPHICS_OPTIONS) {
+      const input = this.toggleInputs.get(opt.key);
+      if (input) input.checked = isOptionChecked(quality, opt);
+    }
+  }
+
+  onToggle(key, checked) {
+    if (!this.app) return;
+    setGraphicsOption(this.app, key, checked);
+    this.syncFromQuality();
+  }
+
+  applyPreset(preset) {
+    if (!this.app) return;
+    applyGraphicsPreset(this.app, preset);
+    this.syncFromQuality();
+  }
+
+  resetSaved() {
+    if (!this.app) return;
+    clearGraphicsOverrides();
+    const fresh = createQualitySettings(this.app.isMobile);
+    applyGraphicsPreset(this.app, fresh);
+    this.syncFromQuality();
+  }
+
+  onKeyDown(e) {
+    if (e.code !== TOGGLE_KEY || e.repeat) return;
+    if (this.app?.state !== 'playing') return;
+    if (this.app.inventoryPanel?.open || this.app.craftingPanel?.open) return;
+    e.preventDefault();
+    this.toggle();
+  }
+
+  toggle() {
+    if (this.open) this.close();
+    else this.openPanel();
+  }
+
+  openPanel() {
+    this.syncFromQuality();
+    this.open = true;
+    this.root.classList.remove('hidden');
+    this.root.setAttribute('aria-hidden', 'false');
+    if (this.app?.blockInteraction) this.app.blockInteraction.inputBlocked = true;
+    this.app?.playerController?.exitLock?.();
+    this.app?.mobileControls?.setGameplayActive(false);
+  }
+
+  close() {
+    this.open = false;
+    this.root.classList.add('hidden');
+    this.root.setAttribute('aria-hidden', 'true');
+    if (this.app?.state === 'playing') {
+      const uiOpen = this.app.inventoryPanel?.open || this.app.craftingPanel?.open;
+      if (this.app.blockInteraction && !uiOpen) {
+        this.app.blockInteraction.inputBlocked = false;
+      }
+      const blocking = this.app.orientationGate?.isBlocking ?? false;
+      this.app.mobileControls?.setGameplayActive(!blocking && !uiOpen);
+    }
+  }
+
+  dispose() {
+    window.removeEventListener('keydown', this.onKeyDown);
+  }
+}

@@ -6,12 +6,13 @@ const STICK_DEADZONE = 0.22;
  * Writes into PlayerController.keys / look and BlockInteraction dig/use.
  */
 export class MobileControls {
-  constructor(root, { playerController, blockInteraction, inventoryPanel, craftingPanel } = {}) {
+  constructor(root, { playerController, blockInteraction, inventoryPanel, craftingPanel, graphicsPanel } = {}) {
     this.root = root;
     this.playerController = playerController ?? null;
     this.blockInteraction = blockInteraction ?? null;
     this.inventoryPanel = inventoryPanel ?? null;
     this.craftingPanel = craftingPanel ?? null;
+    this.graphicsPanel = graphicsPanel ?? null;
 
     this.moveStick = root.querySelector('#mobile-move-stick');
     this.moveKnob = root.querySelector('#mobile-move-knob');
@@ -53,11 +54,12 @@ export class MobileControls {
     this.toolbarEl?.addEventListener('click', this._onToolbarClick);
   }
 
-  setDeps({ playerController, blockInteraction, inventoryPanel, craftingPanel }) {
+  setDeps({ playerController, blockInteraction, inventoryPanel, craftingPanel, graphicsPanel }) {
     if (playerController) this.playerController = playerController;
     if (blockInteraction) this.blockInteraction = blockInteraction;
     if (inventoryPanel) this.inventoryPanel = inventoryPanel;
     if (craftingPanel) this.craftingPanel = craftingPanel;
+    if (graphicsPanel) this.graphicsPanel = graphicsPanel;
   }
 
   show() {
@@ -277,6 +279,8 @@ export class MobileControls {
     } else if (action === 'fly') {
       if (this.blockInteraction?.inputBlocked) return;
       this.playerController?.toggleFlyMode?.();
+    } else if (action === 'graphics') {
+      this.graphicsPanel?.toggle?.();
     }
   }
 

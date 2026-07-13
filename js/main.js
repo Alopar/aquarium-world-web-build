@@ -15,6 +15,8 @@ const hotbarEl = document.getElementById('hotbar');
 const placeModeEl = document.getElementById('hud-place-mode');
 const profilerEl = document.getElementById('profiler');
 const inventoryEl = document.getElementById('inventory-panel');
+const graphicsPanelEl = document.getElementById('graphics-panel');
+const graphicsBtnEl = document.getElementById('btn-graphics');
 const craftingEl = document.getElementById('crafting-panel');
 const mobileControlsEl = document.getElementById('mobile-controls');
 const orientationGateEl = document.getElementById('orientation-gate');
@@ -52,6 +54,8 @@ new App({
   dayNightEls,
   inventoryEl,
   craftingEl,
+  graphicsPanelEl,
+  graphicsBtnEl,
   mobileControlsEl,
   orientationGateEl,
   isMobile,

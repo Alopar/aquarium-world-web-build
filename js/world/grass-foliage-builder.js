@@ -141,6 +141,12 @@ export class GrassFoliageBuilder {
       return;
     }
 
+    this._initResources();
+  }
+
+  _initResources() {
+    if (this.grassGeometry) return;
+
     this.grassGeometry = createCrossGeometry(GRASS_FOLIAGE.width, GRASS_FOLIAGE.height);
     this.flowerGeometry = createCrossGeometry(FLOWER_FOLIAGE.width, FLOWER_FOLIAGE.height);
 
@@ -156,8 +162,33 @@ export class GrassFoliageBuilder {
         createFoliageMaterial(type, FLOWER_FOLIAGE.windStrength, FLOWER_FOLIAGE.height),
       );
     }
-
     this._dummy = new THREE.Object3D();
+  }
+
+  _clearChunks() {
+    this.cancelScheduledFlush();
+    this.dirtyChunks.clear();
+    for (const chunk of this.chunks.values()) {
+      this.clearChunkMeshes(chunk);
+    }
+    this.chunks.clear();
+  }
+
+  setEnabled(enabled, scene = null) {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+
+    if (enabled) {
+      this._initResources();
+      this.group.visible = true;
+      if (scene && !this.group.parent) scene.add(this.group);
+      this.rebuildAll();
+      return;
+    }
+
+    this._clearChunks();
+    this.group.visible = false;
+    if (scene?.remove) scene.remove(this.group);
   }
 
   markDirtyAt(x, y, z) {

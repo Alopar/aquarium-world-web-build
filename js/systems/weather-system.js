@@ -77,7 +77,6 @@ export class WeatherSystem {
    */
   constructor(world, scene, particleSystem = null, sound = null, {
     rainEnabled = true,
-    rainDropCount = WEATHER.dropCount,
   } = {}) {
     this.world = world;
     this.scene = scene;
@@ -97,7 +96,7 @@ export class WeatherSystem {
     this.group.name = 'rain';
     scene.add(this.group);
 
-    this.dropCount = rainDropCount;
+    this.dropCount = WEATHER.dropCount;
     this.positions = new Float32Array(this.dropCount * 6);
     this.speeds = new Float32Array(this.dropCount);
     this.alive = new Uint8Array(this.dropCount);

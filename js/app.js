@@ -5,6 +5,7 @@ import { InventoryPanel } from './ui/inventory-panel.js';
 import { CraftingPanel } from './ui/crafting-panel.js';
 import { MobileControls } from './ui/mobile-controls.js';
 import { OrientationGate } from './ui/orientation-gate.js';
+import { GraphicsPanel } from './ui/graphics-panel.js';
 import { AquariumWorld } from './world/world.js';
 import {
   bindResize,
@@ -49,6 +50,8 @@ export class App {
     craftingEl,
     mobileControlsEl = null,
     orientationGateEl = null,
+    graphicsPanelEl = null,
+    graphicsBtnEl = null,
     isMobile = false,
   }) {
     this.canvas = canvas;
@@ -59,6 +62,12 @@ export class App {
     this.quality = createQualitySettings(this.isMobile);
     this.hud = new GameHud(hudEl, hotbarEl, placeModeEl, healthEls, dayNightEls);
     this.profiler = new Profiler(profilerEl);
+    this.graphicsPanel = graphicsPanelEl ? new GraphicsPanel(graphicsPanelEl, this) : null;
+    if (graphicsBtnEl) {
+      graphicsBtnEl.addEventListener('click', () => {
+        if (this.state === 'playing') this.graphicsPanel?.toggle();
+      });
+    }
     this.inventoryPanel = new InventoryPanel(inventoryEl);
     this.craftingPanel = new CraftingPanel(craftingEl, { inventoryPanel: this.inventoryPanel });
     this.inventoryPanel.setDeps({ craftingPanel: this.craftingPanel });
@@ -95,6 +104,7 @@ export class App {
       if (this.state !== 'playing') return;
       if (this.isMobile) return;
       if (this.inventoryPanel?.open || this.craftingPanel?.open) return;
+      if (this.graphicsPanel?.open) return;
       if (!this.playerController?.isLocked) {
         this.playerController?.requestLock();
       }
@@ -115,7 +125,7 @@ export class App {
 
   onOrientationChange(blocking) {
     if (!this.isMobile || this.state !== 'playing') return;
-    const uiOpen = this.inventoryPanel?.open || this.craftingPanel?.open;
+    const uiOpen = this.inventoryPanel?.open || this.craftingPanel?.open || this.graphicsPanel?.open;
     this.mobileControls?.setGameplayActive(!blocking && !uiOpen);
   }
 
@@ -167,7 +177,6 @@ export class App {
     this.spaceSky = await SpaceSky.create(this.scene);
     this.weather = new WeatherSystem(this.world, this.scene, this.particleSystem, this.sound, {
       rainEnabled: this.quality.rainEnabled,
-      rainDropCount: this.quality.rainDropCount,
     });
     this.inventory = new Inventory();
     this.playerHealth.setInventory(this.inventory);
@@ -241,6 +250,7 @@ export class App {
         blockInteraction: this.blockInteraction,
         inventoryPanel: this.inventoryPanel,
         craftingPanel: this.craftingPanel,
+        graphicsPanel: this.graphicsPanel,
       });
       this.mobileControls.show();
       const hint = document.getElementById('hud-hint');
@@ -321,6 +331,7 @@ export class App {
     this.craftingPanel?.dispose();
     this.hud.dispose();
     this.profiler.dispose();
+    this.graphicsPanel?.dispose();
     this.renderer?.dispose();
   }
 }

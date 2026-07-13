@@ -279,6 +279,43 @@ export class FluidMeshBuilder {
     }
   }
 
+  _ensureMaterials() {
+    if (this.threeMaterials.size > 0) return;
+    for (const mat of listLiquidMaterials()) {
+      this.threeMaterials.set(mat.id, createFluidShaderMaterial(mat));
+    }
+  }
+
+  _clearChunks() {
+    this.cancelScheduledFlush();
+    this.dirtyChunks.clear();
+    for (const chunk of this.chunks.values()) {
+      for (const mesh of chunk.meshes.values()) {
+        mesh.geometry.dispose();
+        chunk.group.remove(mesh);
+      }
+      this.group.remove(chunk.group);
+    }
+    this.chunks.clear();
+  }
+
+  setEnabled(enabled, scene = null) {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+
+    if (enabled) {
+      this._ensureMaterials();
+      this.group.visible = true;
+      if (scene && !this.group.parent) scene.add(this.group);
+      this.rebuildAll();
+      return;
+    }
+
+    this._clearChunks();
+    this.group.visible = false;
+    if (scene?.remove) scene.remove(this.group);
+  }
+
   update(dt) {
     if (!this.enabled) return;
     this.elapsed += dt;
