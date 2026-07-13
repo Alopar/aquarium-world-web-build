@@ -313,7 +313,7 @@ function buildTexturedChunkBuffers(grid, cx, cy, cz, chunkSize, atlasEligible = 
   return buffers;
 }
 
-function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
+function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz, chunkSize) {
   for (const mesh of chunk.meshes.values()) {
     mesh.geometry.dispose();
     chunk.group.remove(mesh);
@@ -337,9 +337,6 @@ function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
     const mesh = new THREE.Mesh(geometry, threeMaterials.get(key));
     mesh.castShadow = !buf.flat;
     mesh.receiveShadow = !buf.flat;
-    if (buf.flat) {
-      mesh.frustumCulled = false;
-    }
     mesh.name = `chunk-${cx},${cy},${cz}-${key}`;
     if (key === FLAT_TRANSPARENT_KEY) {
       mesh.renderOrder = 1;
@@ -347,6 +344,16 @@ function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
     chunk.meshes.set(key, mesh);
     chunk.group.add(mesh);
   }
+
+  const s = chunkSize * VOXEL_SIZE;
+  chunk.cx = cx;
+  chunk.cy = cy;
+  chunk.cz = cz;
+  chunk.boxMin = [cx * s, cy * s, cz * s];
+  chunk.boxMax = [(cx + 1) * s, (cy + 1) * s, (cz + 1) * s];
+  chunk.hasGeometry = chunk.meshes.size > 0;
+  chunk.group.frustumCulled = false;
+  chunk.group.visible = chunk.hasGeometry;
 }
 
 export class MeshBuilder {
@@ -464,6 +471,8 @@ export class MeshBuilder {
         chunk.group.remove(mesh);
       }
       chunk.meshes.clear();
+      chunk.hasGeometry = false;
+      chunk.group.visible = false;
     }
   }
 
@@ -539,7 +548,17 @@ export class MeshBuilder {
       const group = new THREE.Group();
       group.name = `chunk-${key}`;
       this.group.add(group);
-      this.chunks.set(key, { group, meshes: new Map() });
+      this.chunks.set(key, {
+        group,
+        meshes: new Map(),
+        cx,
+        cy,
+        cz,
+        hasGeometry: false,
+        boxMin: [0, 0, 0],
+        boxMax: [0, 0, 0],
+        occludeStreak: 0,
+      });
     }
     return this.chunks.get(key);
   }
@@ -549,7 +568,7 @@ export class MeshBuilder {
     const buffers = this.flatColors
       ? buildGreedyFlatChunkBuffers(this.grid, cx, cy, cz, this.chunkSize)
       : buildTexturedChunkBuffers(this.grid, cx, cy, cz, this.chunkSize, this._atlasEligibleId);
-    applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz);
+    applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz, this.chunkSize);
   }
 
   rebuildAll() {

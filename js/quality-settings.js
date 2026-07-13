@@ -1,4 +1,5 @@
 import { FLUID, GAS, WEATHER } from './constants.js';
+import { FOG_VIEW } from './systems/fog-controller.js';
 
 const STORAGE_KEY = 'aquarium-graphics-v1';
 
@@ -13,6 +14,10 @@ export const DESKTOP_QUALITY = {
   foliageEnabled: true,
   fluidMeshEnabled: true,
   simpleSmokeRender: false,
+  chunkFrustumCull: true,
+  chunkOcclusionCull: true,
+  fogEnabled: false,
+  fogViewDistance: FOG_VIEW.default,
 };
 
 export const MOBILE_QUALITY = {
@@ -26,6 +31,10 @@ export const MOBILE_QUALITY = {
   foliageEnabled: false,
   fluidMeshEnabled: false,
   simpleSmokeRender: true,
+  chunkFrustumCull: true,
+  chunkOcclusionCull: true,
+  fogEnabled: false,
+  fogViewDistance: 45,
 };
 
 /** UI metadata for the graphics panel. */
@@ -79,6 +88,34 @@ export const GRAPHICS_OPTIONS = [
     label: 'Простой дым (блоки)',
     hint: 'Вместо volumetric raymarch',
   },
+  {
+    key: 'chunkFrustumCull',
+    label: 'Frustum culling чанков',
+    hint: 'AABB вне камеры — не рисовать',
+  },
+  {
+    key: 'chunkOcclusionCull',
+    label: 'Occlusion (voxel DDA)',
+    hint: '5 лучей на верх чанка, раз в 2 кадра',
+  },
+  {
+    key: 'fogEnabled',
+    label: 'Плотный туман',
+    hint: 'Линейный туман + отсечение дальних чанков',
+  },
+];
+
+export const GRAPHICS_SLIDERS = [
+  {
+    key: 'fogViewDistance',
+    label: 'Дальность тумана',
+    hint: '4 м — вплотную, дальше не видно',
+    min: FOG_VIEW.min,
+    max: FOG_VIEW.max,
+    step: 1,
+    unit: 'м',
+    requires: 'fogEnabled',
+  },
 ];
 
 export function isTickOptionEnabled(value) {
@@ -104,6 +141,9 @@ export function saveGraphicsOverrides(settings) {
   const payload = {};
   for (const opt of GRAPHICS_OPTIONS) {
     payload[opt.key] = settings[opt.key];
+  }
+  for (const slider of GRAPHICS_SLIDERS) {
+    payload[slider.key] = settings[slider.key];
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }

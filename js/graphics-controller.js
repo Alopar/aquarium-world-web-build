@@ -1,5 +1,6 @@
 import { FLUID, GAS } from './constants.js';
 import { setAquariumTankGlassMode } from './world/glass-tank.js';
+import { applyUserFog, clampFogViewDistance } from './systems/fog-controller.js';
 import {
   DESKTOP_QUALITY,
   MOBILE_QUALITY,
@@ -16,7 +17,11 @@ export function applyGraphicsSettings(app, patch) {
   if (!app?.quality) return;
 
   const prev = app.quality;
-  const next = { ...prev, ...patch };
+  const patchNorm = { ...patch };
+  if (patchNorm.fogViewDistance != null) {
+    patchNorm.fogViewDistance = clampFogViewDistance(patchNorm.fogViewDistance);
+  }
+  const next = { ...prev, ...patchNorm };
   const world = app.world;
 
   if (next.rainEnabled !== prev.rainEnabled && app.weather) {
@@ -61,6 +66,25 @@ export function applyGraphicsSettings(app, patch) {
     world.gasMeshBuilder.setSimpleRender(next.simpleSmokeRender);
   }
 
+  if (
+    (next.chunkFrustumCull !== prev.chunkFrustumCull
+      || next.chunkOcclusionCull !== prev.chunkOcclusionCull
+      || next.fogEnabled !== prev.fogEnabled
+      || next.fogViewDistance !== prev.fogViewDistance)
+    && app.chunkVisibility
+    && app.camera
+    && app.world
+  ) {
+    app.chunkVisibility.update(app.camera, app.world, next, { force: true });
+  }
+
+  if (
+    (next.fogEnabled !== prev.fogEnabled || next.fogViewDistance !== prev.fogViewDistance)
+    && app.scene
+  ) {
+    applyUserFog(app.scene, next);
+  }
+
   app.quality = next;
   saveGraphicsOverrides(next);
 }
@@ -78,6 +102,11 @@ export function setGraphicsOption(app, key, enabled, maxTicks = FLUID.maxTicksPe
   } else if (key === 'gasTicksPerFrame') {
     value = tickOptionValue(enabled, GAS.maxTicksPerFrame);
   }
+  applyGraphicsSettings(app, { [key]: value });
+}
+
+/** @param {import('./app.js').App} app */
+export function setGraphicsSlider(app, key, value) {
   applyGraphicsSettings(app, { [key]: value });
 }
 

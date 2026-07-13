@@ -33,6 +33,8 @@ import { DayNightSystem } from './systems/day-night.js';
 import { WeatherSystem } from './systems/weather-system.js';
 import { resolveWorldSeed, storeSeed } from './seed.js';
 import { createQualitySettings } from './quality-settings.js';
+import { ChunkVisibilitySystem } from './systems/chunk-visibility.js';
+import { applyUserFog } from './systems/fog-controller.js';
 
 export class App {
   constructor({
@@ -98,6 +100,7 @@ export class App {
     this.fluidSystem = null;
     this.gasSystem = null;
     this.world = null;
+    this.chunkVisibility = new ChunkVisibilitySystem();
     this.running = false;
 
     this.onCanvasClick = () => {
@@ -264,6 +267,7 @@ export class App {
     // Warm MeshStandard shaders with the fixed block-light pool so placing
     // lumen mid-game does not trigger a WebGL program recompile hitch.
     this.renderer.compile(this.scene, this.camera);
+    this.chunkVisibility.update(this.camera, this.world, this.quality, { force: true });
     this.running = true;
     this.clock.start();
     this.animate();
@@ -291,9 +295,11 @@ export class App {
     this.spaceSky?.update(this.camera);
     this.dayNight?.update(dt, this.playerController, this.spaceSky, this.world?.fluidField);
     this.weather?.update(dt, this.playerController, this.dayNight);
+    applyUserFog(this.scene, this.quality);
     this.hud.updateDayNight(this.dayNight);
     this.blockInteraction?.updateHighlight(this.scene);
     this.particleSystem?.update(dt);
+    this.chunkVisibility?.update(this.camera, this.world, this.quality);
     const updateMs = performance.now() - t0;
 
     this.renderer.render(this.scene, this.camera);
