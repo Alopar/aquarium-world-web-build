@@ -1,7 +1,14 @@
 import * as THREE from 'three';
 import { CHUNK_SIZE, MAX_CHUNKS_REBUILD_PER_FRAME, VOXEL_SIZE } from '../constants.js';
 import { getMaterial, isOpaque, listSolidMaterials } from '../materials/registry.js';
-import { getBlockTexture } from '../materials/textures.js';
+import {
+  buildSolidAtlas,
+  getBlockTexture,
+  getSolidAtlasTexture,
+  getSolidAtlasUv,
+} from '../materials/textures.js';
+
+const ATLAS_KEY = '__atlas__';
 
 const FACE_DEFS = [
   { dir: [1, 0, 0], normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], uv: (x, y, z, c) => [y + c[1], z + c[2]] },
@@ -41,26 +48,25 @@ function createMeshMaterial(materialDef) {
   return new THREE.MeshStandardMaterial(params);
 }
 
-function getOrCreateBuffer(buffers, id) {
-  if (!buffers.has(id)) {
-    buffers.set(id, { positions: [], normals: [], uvs: [], indices: [] });
+function getOrCreateBuffer(buffers, key) {
+  if (!buffers.has(key)) {
+    buffers.set(key, { positions: [], normals: [], uvs: [], indices: [] });
   }
-  return buffers.get(id);
+  return buffers.get(key);
 }
 
-function pushQuad(buf, normal, v0, v1, v2, v3, uv0, uv1, uv2, uv3) {
-  const base = buf.positions.length / 3;
-  buf.positions.push(...v0, ...v1, ...v2, ...v3);
-  buf.normals.push(...normal, ...normal, ...normal, ...normal);
-  buf.uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
-  buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+function atlasUv(localU, localV, tile) {
+  return [
+    tile[0] + localU * tile[2],
+    tile[1] + localV * tile[3],
+  ];
 }
 
 /**
- * Greedy meshing per-chunk, per-face direction.
- * Keeps UVs in "block space" so textures tile per-block like before.
+ * Simple per-voxel meshing (no greedy stitching).
+ * Uses atlas for most solid opaque blocks to reduce draw calls.
  */
-function buildChunkBuffers(grid, cx, cy, cz, chunkSize) {
+function buildChunkBuffers(grid, cx, cy, cz, chunkSize, atlasEligible = null) {
   const buffers = new Map();
   const x0 = cx * chunkSize;
   const y0 = cy * chunkSize;
@@ -69,449 +75,64 @@ function buildChunkBuffers(grid, cx, cy, cz, chunkSize) {
   const y1 = Math.min(y0 + chunkSize, grid.size.y);
   const z1 = Math.min(z0 + chunkSize, grid.size.z);
 
-  const sizeX = x1 - x0;
-  const sizeY = y1 - y0;
-  const sizeZ = z1 - z0;
-
-  // Reusable masks to avoid allocations inside loops.
-  /** @type {Array<string|null>} */
-  const mask = [];
-
-  function voxelId(x, y, z) {
-    return grid.get(x0 + x, y0 + y, z0 + z);
+  function getTile(blockId) {
+    const uv = getSolidAtlasUv(blockId);
+    if (!uv) return [0, 0, 1, 1];
+    return [uv.ox, uv.oy, uv.sx, uv.sy];
   }
 
-  // +X faces (sweep x, mask in (y,z))
-  for (let x = 0; x < sizeX; x++) {
-    mask.length = sizeY * sizeZ;
-    let mi = 0;
-    for (let y = 0; y < sizeY; y++) {
-      for (let z = 0; z < sizeZ; z++) {
-        const id = voxelId(x, y, z);
+  for (let x = x0; x < x1; x++) {
+    for (let y = y0; y < y1; y++) {
+      for (let z = z0; z < z1; z++) {
+        const id = grid.get(x, y, z);
         const matDef = getMaterial(id);
-        if (!matDef.solid) {
-          mask[mi++] = null;
-          continue;
-        }
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const nx = wx + 1;
-        const ny = wy;
-        const nz = wz;
-        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
-      }
-    }
+        if (!matDef.solid) continue;
 
-    for (let y = 0; y < sizeY; y++) {
-      for (let z = 0; z < sizeZ;) {
-        const id = mask[y * sizeZ + z];
-        if (!id) {
-          z++;
-          continue;
-        }
-        // Compute width in z.
-        let w = 1;
-        while (z + w < sizeZ && mask[y * sizeZ + z + w] === id) w++;
-        // Compute height in y.
-        let h = 1;
-        outer: for (; y + h < sizeY; h++) {
-          for (let k = 0; k < w; k++) {
-            if (mask[(y + h) * sizeZ + z + k] !== id) break outer;
+        const useAtlas = atlasEligible ? atlasEligible(id) : false;
+        const key = useAtlas ? ATLAS_KEY : id;
+        const buf = getOrCreateBuffer(buffers, key);
+        const tile = useAtlas ? getTile(id) : null;
+
+        for (const face of FACE_DEFS) {
+          const nx = x + face.dir[0];
+          const ny = y + face.dir[1];
+          const nz = z + face.dir[2];
+          if (!shouldRenderFace(grid, x, y, z, nx, ny, nz)) continue;
+
+          const base = buf.positions.length / 3;
+          for (const corner of face.corners) {
+            buf.positions.push(
+              (x + corner[0]) * VOXEL_SIZE,
+              (y + corner[1]) * VOXEL_SIZE,
+              (z + corner[2]) * VOXEL_SIZE,
+            );
+            buf.normals.push(...face.normal);
+
+            // Local face UVs (0..1) so atlas mapping is stable.
+            let u = 0;
+            let v = 0;
+            if (face.normal[0] !== 0) { // ±X: u=y, v=z
+              u = corner[1];
+              v = corner[2];
+            } else if (face.normal[1] !== 0) { // ±Y: u=x, v=z
+              u = corner[0];
+              v = corner[2];
+            } else { // ±Z: u=x, v=y
+              u = corner[0];
+              v = corner[1];
+            }
+            if (tile) {
+              const [au, av] = atlasUv(u, v, tile);
+              buf.uvs.push(au, av);
+            } else {
+              // Per-material textures still tile in block space.
+              const [du, dv] = face.uv(x, y, z, corner);
+              buf.uvs.push(du, dv);
+            }
           }
+
+          buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
         }
-        // Clear.
-        for (let dy = 0; dy < h; dy++) {
-          for (let dz = 0; dz < w; dz++) {
-            mask[(y + dy) * sizeZ + z + dz] = null;
-          }
-        }
-
-        const buf = getOrCreateBuffer(buffers, id);
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const xPlane = (wx + 1) * VOXEL_SIZE;
-        const yA = wy * VOXEL_SIZE;
-        const yB = (wy + h) * VOXEL_SIZE;
-        const zA = wz * VOXEL_SIZE;
-        const zB = (wz + w) * VOXEL_SIZE;
-
-        // Matches FACE_DEFS[0] winding/UV mapping (+X): u=y, v=z
-        pushQuad(
-          buf,
-          [1, 0, 0],
-          [xPlane, yA, zA],
-          [xPlane, yB, zA],
-          [xPlane, yB, zB],
-          [xPlane, yA, zB],
-          [wy, wz],
-          [wy + h, wz],
-          [wy + h, wz + w],
-          [wy, wz + w],
-        );
-
-        z += w;
-      }
-    }
-  }
-
-  // -X faces (sweep x, mask in (y,z))
-  for (let x = 0; x < sizeX; x++) {
-    mask.length = sizeY * sizeZ;
-    let mi = 0;
-    for (let y = 0; y < sizeY; y++) {
-      for (let z = 0; z < sizeZ; z++) {
-        const id = voxelId(x, y, z);
-        const matDef = getMaterial(id);
-        if (!matDef.solid) {
-          mask[mi++] = null;
-          continue;
-        }
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const nx = wx - 1;
-        const ny = wy;
-        const nz = wz;
-        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
-      }
-    }
-
-    for (let y = 0; y < sizeY; y++) {
-      for (let z = 0; z < sizeZ;) {
-        const id = mask[y * sizeZ + z];
-        if (!id) {
-          z++;
-          continue;
-        }
-        let w = 1;
-        while (z + w < sizeZ && mask[y * sizeZ + z + w] === id) w++;
-        let h = 1;
-        outer: for (; y + h < sizeY; h++) {
-          for (let k = 0; k < w; k++) {
-            if (mask[(y + h) * sizeZ + z + k] !== id) break outer;
-          }
-        }
-        for (let dy = 0; dy < h; dy++) {
-          for (let dz = 0; dz < w; dz++) {
-            mask[(y + dy) * sizeZ + z + dz] = null;
-          }
-        }
-
-        const buf = getOrCreateBuffer(buffers, id);
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const xPlane = wx * VOXEL_SIZE;
-        const yA = wy * VOXEL_SIZE;
-        const yB = (wy + h) * VOXEL_SIZE;
-        const zA = wz * VOXEL_SIZE;
-        const zB = (wz + w) * VOXEL_SIZE;
-
-        // Matches FACE_DEFS[1] winding/UV mapping (-X): u=z, v=y
-        pushQuad(
-          buf,
-          [-1, 0, 0],
-          [xPlane, yA, zB],
-          [xPlane, yB, zB],
-          [xPlane, yB, zA],
-          [xPlane, yA, zA],
-          [wz + w, wy],
-          [wz + w, wy + h],
-          [wz, wy + h],
-          [wz, wy],
-        );
-
-        z += w;
-      }
-    }
-  }
-
-  // +Y faces (sweep y, mask in (x,z))
-  for (let y = 0; y < sizeY; y++) {
-    mask.length = sizeX * sizeZ;
-    let mi = 0;
-    for (let x = 0; x < sizeX; x++) {
-      for (let z = 0; z < sizeZ; z++) {
-        const id = voxelId(x, y, z);
-        const matDef = getMaterial(id);
-        if (!matDef.solid) {
-          mask[mi++] = null;
-          continue;
-        }
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const nx = wx;
-        const ny = wy + 1;
-        const nz = wz;
-        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
-      }
-    }
-
-    for (let x = 0; x < sizeX; x++) {
-      for (let z = 0; z < sizeZ;) {
-        const id = mask[x * sizeZ + z];
-        if (!id) {
-          z++;
-          continue;
-        }
-        let w = 1;
-        while (z + w < sizeZ && mask[x * sizeZ + z + w] === id) w++;
-        let h = 1;
-        outer: for (; x + h < sizeX; h++) {
-          for (let k = 0; k < w; k++) {
-            if (mask[(x + h) * sizeZ + z + k] !== id) break outer;
-          }
-        }
-        for (let dx = 0; dx < h; dx++) {
-          for (let dz = 0; dz < w; dz++) {
-            mask[(x + dx) * sizeZ + z + dz] = null;
-          }
-        }
-
-        const buf = getOrCreateBuffer(buffers, id);
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const yPlane = (wy + 1) * VOXEL_SIZE;
-        const xA = wx * VOXEL_SIZE;
-        const xB = (wx + h) * VOXEL_SIZE;
-        const zA = wz * VOXEL_SIZE;
-        const zB = (wz + w) * VOXEL_SIZE;
-
-        // Matches FACE_DEFS[2] winding/UV mapping (+Y): u=x, v=z (with z flipped in vertex order)
-        pushQuad(
-          buf,
-          [0, 1, 0],
-          [xA, yPlane, zB],
-          [xB, yPlane, zB],
-          [xB, yPlane, zA],
-          [xA, yPlane, zA],
-          [wx, wz + w],
-          [wx + h, wz + w],
-          [wx + h, wz],
-          [wx, wz],
-        );
-
-        z += w;
-      }
-    }
-  }
-
-  // -Y faces (sweep y, mask in (x,z))
-  for (let y = 0; y < sizeY; y++) {
-    mask.length = sizeX * sizeZ;
-    let mi = 0;
-    for (let x = 0; x < sizeX; x++) {
-      for (let z = 0; z < sizeZ; z++) {
-        const id = voxelId(x, y, z);
-        const matDef = getMaterial(id);
-        if (!matDef.solid) {
-          mask[mi++] = null;
-          continue;
-        }
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const nx = wx;
-        const ny = wy - 1;
-        const nz = wz;
-        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
-      }
-    }
-
-    for (let x = 0; x < sizeX; x++) {
-      for (let z = 0; z < sizeZ;) {
-        const id = mask[x * sizeZ + z];
-        if (!id) {
-          z++;
-          continue;
-        }
-        let w = 1;
-        while (z + w < sizeZ && mask[x * sizeZ + z + w] === id) w++;
-        let h = 1;
-        outer: for (; x + h < sizeX; h++) {
-          for (let k = 0; k < w; k++) {
-            if (mask[(x + h) * sizeZ + z + k] !== id) break outer;
-          }
-        }
-        for (let dx = 0; dx < h; dx++) {
-          for (let dz = 0; dz < w; dz++) {
-            mask[(x + dx) * sizeZ + z + dz] = null;
-          }
-        }
-
-        const buf = getOrCreateBuffer(buffers, id);
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const yPlane = wy * VOXEL_SIZE;
-        const xA = wx * VOXEL_SIZE;
-        const xB = (wx + h) * VOXEL_SIZE;
-        const zA = wz * VOXEL_SIZE;
-        const zB = (wz + w) * VOXEL_SIZE;
-
-        // Matches FACE_DEFS[3] winding/UV mapping (-Y): u=x, v=z
-        pushQuad(
-          buf,
-          [0, -1, 0],
-          [xA, yPlane, zA],
-          [xB, yPlane, zA],
-          [xB, yPlane, zB],
-          [xA, yPlane, zB],
-          [wx, wz],
-          [wx + h, wz],
-          [wx + h, wz + w],
-          [wx, wz + w],
-        );
-
-        z += w;
-      }
-    }
-  }
-
-  // +Z faces (sweep z, mask in (x,y))
-  for (let z = 0; z < sizeZ; z++) {
-    mask.length = sizeX * sizeY;
-    let mi = 0;
-    for (let x = 0; x < sizeX; x++) {
-      for (let y = 0; y < sizeY; y++) {
-        const id = voxelId(x, y, z);
-        const matDef = getMaterial(id);
-        if (!matDef.solid) {
-          mask[mi++] = null;
-          continue;
-        }
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const nx = wx;
-        const ny = wy;
-        const nz = wz + 1;
-        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
-      }
-    }
-
-    for (let x = 0; x < sizeX; x++) {
-      for (let y = 0; y < sizeY;) {
-        const id = mask[x * sizeY + y];
-        if (!id) {
-          y++;
-          continue;
-        }
-        let w = 1;
-        while (y + w < sizeY && mask[x * sizeY + y + w] === id) w++;
-        let h = 1;
-        outer: for (; x + h < sizeX; h++) {
-          for (let k = 0; k < w; k++) {
-            if (mask[(x + h) * sizeY + y + k] !== id) break outer;
-          }
-        }
-        for (let dx = 0; dx < h; dx++) {
-          for (let dy = 0; dy < w; dy++) {
-            mask[(x + dx) * sizeY + y + dy] = null;
-          }
-        }
-
-        const buf = getOrCreateBuffer(buffers, id);
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const zPlane = (wz + 1) * VOXEL_SIZE;
-        const xA = wx * VOXEL_SIZE;
-        const xB = (wx + h) * VOXEL_SIZE;
-        const yA = wy * VOXEL_SIZE;
-        const yB = (wy + w) * VOXEL_SIZE;
-
-        // Matches FACE_DEFS[4] winding/UV mapping (+Z): u=x, v=y
-        pushQuad(
-          buf,
-          [0, 0, 1],
-          [xB, yA, zPlane],
-          [xB, yB, zPlane],
-          [xA, yB, zPlane],
-          [xA, yA, zPlane],
-          [wx + h, wy],
-          [wx + h, wy + w],
-          [wx, wy + w],
-          [wx, wy],
-        );
-
-        y += w;
-      }
-    }
-  }
-
-  // -Z faces (sweep z, mask in (x,y))
-  for (let z = 0; z < sizeZ; z++) {
-    mask.length = sizeX * sizeY;
-    let mi = 0;
-    for (let x = 0; x < sizeX; x++) {
-      for (let y = 0; y < sizeY; y++) {
-        const id = voxelId(x, y, z);
-        const matDef = getMaterial(id);
-        if (!matDef.solid) {
-          mask[mi++] = null;
-          continue;
-        }
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const nx = wx;
-        const ny = wy;
-        const nz = wz - 1;
-        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
-      }
-    }
-
-    for (let x = 0; x < sizeX; x++) {
-      for (let y = 0; y < sizeY;) {
-        const id = mask[x * sizeY + y];
-        if (!id) {
-          y++;
-          continue;
-        }
-        let w = 1;
-        while (y + w < sizeY && mask[x * sizeY + y + w] === id) w++;
-        let h = 1;
-        outer: for (; x + h < sizeX; h++) {
-          for (let k = 0; k < w; k++) {
-            if (mask[(x + h) * sizeY + y + k] !== id) break outer;
-          }
-        }
-        for (let dx = 0; dx < h; dx++) {
-          for (let dy = 0; dy < w; dy++) {
-            mask[(x + dx) * sizeY + y + dy] = null;
-          }
-        }
-
-        const buf = getOrCreateBuffer(buffers, id);
-        const wx = x0 + x;
-        const wy = y0 + y;
-        const wz = z0 + z;
-        const zPlane = wz * VOXEL_SIZE;
-        const xA = wx * VOXEL_SIZE;
-        const xB = (wx + h) * VOXEL_SIZE;
-        const yA = wy * VOXEL_SIZE;
-        const yB = (wy + w) * VOXEL_SIZE;
-
-        // Matches FACE_DEFS[5] winding/UV mapping (-Z): u=x, v=y
-        pushQuad(
-          buf,
-          [0, 0, -1],
-          [xA, yA, zPlane],
-          [xA, yB, zPlane],
-          [xB, yB, zPlane],
-          [xB, yA, zPlane],
-          [wx, wy],
-          [wx, wy + w],
-          [wx + h, wy + w],
-          [wx + h, wy],
-        );
-
-        y += w;
       }
     }
   }
@@ -526,7 +147,7 @@ function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
   }
   chunk.meshes.clear();
 
-  for (const [id, buf] of buffers) {
+  for (const [key, buf] of buffers) {
     if (buf.positions.length === 0) continue;
 
     const geometry = new THREE.BufferGeometry();
@@ -536,11 +157,11 @@ function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
     geometry.setIndex(buf.indices);
     geometry.computeBoundingSphere();
 
-    const mesh = new THREE.Mesh(geometry, threeMaterials.get(id));
+    const mesh = new THREE.Mesh(geometry, threeMaterials.get(key));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    mesh.name = `chunk-${cx},${cy},${cz}-${id}`;
-    chunk.meshes.set(id, mesh);
+    mesh.name = `chunk-${cx},${cy},${cz}-${key}`;
+    chunk.meshes.set(key, mesh);
     chunk.group.add(mesh);
   }
 }
@@ -570,9 +191,36 @@ export class MeshBuilder {
     this.chunksY = Math.ceil(sy / chunkSize);
     this.chunksZ = Math.ceil(sz / chunkSize);
 
-    for (const mat of listSolidMaterials()) {
+    const solids = listSolidMaterials();
+    buildSolidAtlas(solids);
+
+    const atlasTex = getSolidAtlasTexture();
+    if (atlasTex) {
+      const atlasMat = new THREE.MeshStandardMaterial({
+        map: atlasTex,
+        color: 0xffffff,
+        roughness: 0.92,
+      });
+      this.threeMaterials.set(ATLAS_KEY, atlasMat);
+    }
+
+    const isAtlasEligible = (m) =>
+      atlasTex
+      && m?.solid === true
+      && m?.opaque === true
+      && (m.opacity == null || m.opacity >= 1)
+      && m?.emissive == null
+      && getSolidAtlasUv(m.id) != null;
+
+    for (const mat of solids) {
+      if (isAtlasEligible(mat)) continue;
       this.threeMaterials.set(mat.id, createMeshMaterial(mat));
     }
+
+    this._atlasEligibleId = (id) => {
+      const m = getMaterial(id);
+      return isAtlasEligible(m);
+    };
   }
 
   markDirtyAt(x, y, z) {
@@ -654,7 +302,7 @@ export class MeshBuilder {
 
   rebuildChunk(cx, cy, cz) {
     const chunk = this.getOrCreateChunk(cx, cy, cz);
-    const buffers = buildChunkBuffers(this.grid, cx, cy, cz, this.chunkSize);
+    const buffers = buildChunkBuffers(this.grid, cx, cy, cz, this.chunkSize, this._atlasEligibleId);
     applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz);
   }
 

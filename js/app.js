@@ -56,7 +56,7 @@ export class App {
     this.seedInput = seedInput;
     this.isMobile = !!isMobile;
     this.hud = new GameHud(hudEl, hotbarEl, placeModeEl, healthEls, dayNightEls);
-    this.profiler = new Profiler(profilerEl, { hidden: this.isMobile });
+    this.profiler = new Profiler(profilerEl);
     this.inventoryPanel = new InventoryPanel(inventoryEl);
     this.craftingPanel = new CraftingPanel(craftingEl, { inventoryPanel: this.inventoryPanel });
     this.inventoryPanel.setDeps({ craftingPanel: this.craftingPanel });
@@ -106,6 +106,9 @@ export class App {
     });
     canvas.addEventListener('click', this.onCanvasClick);
     canvas.addEventListener('contextmenu', this.onContextMenu);
+
+    // Debug handle (useful for mobile perf tuning via DevTools).
+    window.__app = this;
   }
 
   onOrientationChange(blocking) {
