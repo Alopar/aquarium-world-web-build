@@ -41,6 +41,25 @@ function createMeshMaterial(materialDef) {
   return new THREE.MeshStandardMaterial(params);
 }
 
+function getOrCreateBuffer(buffers, id) {
+  if (!buffers.has(id)) {
+    buffers.set(id, { positions: [], normals: [], uvs: [], indices: [] });
+  }
+  return buffers.get(id);
+}
+
+function pushQuad(buf, normal, v0, v1, v2, v3, uv0, uv1, uv2, uv3) {
+  const base = buf.positions.length / 3;
+  buf.positions.push(...v0, ...v1, ...v2, ...v3);
+  buf.normals.push(...normal, ...normal, ...normal, ...normal);
+  buf.uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
+  buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+}
+
+/**
+ * Greedy meshing per-chunk, per-face direction.
+ * Keeps UVs in "block space" so textures tile per-block like before.
+ */
 function buildChunkBuffers(grid, cx, cy, cz, chunkSize) {
   const buffers = new Map();
   const x0 = cx * chunkSize;
@@ -50,36 +69,449 @@ function buildChunkBuffers(grid, cx, cy, cz, chunkSize) {
   const y1 = Math.min(y0 + chunkSize, grid.size.y);
   const z1 = Math.min(z0 + chunkSize, grid.size.z);
 
-  for (let x = x0; x < x1; x++) {
-    for (let y = y0; y < y1; y++) {
-      for (let z = z0; z < z1; z++) {
-        const id = grid.get(x, y, z);
+  const sizeX = x1 - x0;
+  const sizeY = y1 - y0;
+  const sizeZ = z1 - z0;
+
+  // Reusable masks to avoid allocations inside loops.
+  /** @type {Array<string|null>} */
+  const mask = [];
+
+  function voxelId(x, y, z) {
+    return grid.get(x0 + x, y0 + y, z0 + z);
+  }
+
+  // +X faces (sweep x, mask in (y,z))
+  for (let x = 0; x < sizeX; x++) {
+    mask.length = sizeY * sizeZ;
+    let mi = 0;
+    for (let y = 0; y < sizeY; y++) {
+      for (let z = 0; z < sizeZ; z++) {
+        const id = voxelId(x, y, z);
         const matDef = getMaterial(id);
-        if (!matDef.solid) continue;
-
-        for (const face of FACE_DEFS) {
-          const [nx, ny, nz] = [x + face.dir[0], y + face.dir[1], z + face.dir[2]];
-          if (!shouldRenderFace(grid, x, y, z, nx, ny, nz)) continue;
-
-          if (!buffers.has(id)) {
-            buffers.set(id, { positions: [], normals: [], uvs: [], indices: [] });
-          }
-          const buf = buffers.get(id);
-          const base = buf.positions.length / 3;
-
-          for (const corner of face.corners) {
-            buf.positions.push(
-              (x + corner[0]) * VOXEL_SIZE,
-              (y + corner[1]) * VOXEL_SIZE,
-              (z + corner[2]) * VOXEL_SIZE,
-            );
-            buf.normals.push(...face.normal);
-            const [u, v] = face.uv(x, y, z, corner);
-            buf.uvs.push(u, v);
-          }
-
-          buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        if (!matDef.solid) {
+          mask[mi++] = null;
+          continue;
         }
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const nx = wx + 1;
+        const ny = wy;
+        const nz = wz;
+        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
+      }
+    }
+
+    for (let y = 0; y < sizeY; y++) {
+      for (let z = 0; z < sizeZ;) {
+        const id = mask[y * sizeZ + z];
+        if (!id) {
+          z++;
+          continue;
+        }
+        // Compute width in z.
+        let w = 1;
+        while (z + w < sizeZ && mask[y * sizeZ + z + w] === id) w++;
+        // Compute height in y.
+        let h = 1;
+        outer: for (; y + h < sizeY; h++) {
+          for (let k = 0; k < w; k++) {
+            if (mask[(y + h) * sizeZ + z + k] !== id) break outer;
+          }
+        }
+        // Clear.
+        for (let dy = 0; dy < h; dy++) {
+          for (let dz = 0; dz < w; dz++) {
+            mask[(y + dy) * sizeZ + z + dz] = null;
+          }
+        }
+
+        const buf = getOrCreateBuffer(buffers, id);
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const xPlane = (wx + 1) * VOXEL_SIZE;
+        const yA = wy * VOXEL_SIZE;
+        const yB = (wy + h) * VOXEL_SIZE;
+        const zA = wz * VOXEL_SIZE;
+        const zB = (wz + w) * VOXEL_SIZE;
+
+        // Matches FACE_DEFS[0] winding/UV mapping (+X): u=y, v=z
+        pushQuad(
+          buf,
+          [1, 0, 0],
+          [xPlane, yA, zA],
+          [xPlane, yB, zA],
+          [xPlane, yB, zB],
+          [xPlane, yA, zB],
+          [wy, wz],
+          [wy + h, wz],
+          [wy + h, wz + w],
+          [wy, wz + w],
+        );
+
+        z += w;
+      }
+    }
+  }
+
+  // -X faces (sweep x, mask in (y,z))
+  for (let x = 0; x < sizeX; x++) {
+    mask.length = sizeY * sizeZ;
+    let mi = 0;
+    for (let y = 0; y < sizeY; y++) {
+      for (let z = 0; z < sizeZ; z++) {
+        const id = voxelId(x, y, z);
+        const matDef = getMaterial(id);
+        if (!matDef.solid) {
+          mask[mi++] = null;
+          continue;
+        }
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const nx = wx - 1;
+        const ny = wy;
+        const nz = wz;
+        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
+      }
+    }
+
+    for (let y = 0; y < sizeY; y++) {
+      for (let z = 0; z < sizeZ;) {
+        const id = mask[y * sizeZ + z];
+        if (!id) {
+          z++;
+          continue;
+        }
+        let w = 1;
+        while (z + w < sizeZ && mask[y * sizeZ + z + w] === id) w++;
+        let h = 1;
+        outer: for (; y + h < sizeY; h++) {
+          for (let k = 0; k < w; k++) {
+            if (mask[(y + h) * sizeZ + z + k] !== id) break outer;
+          }
+        }
+        for (let dy = 0; dy < h; dy++) {
+          for (let dz = 0; dz < w; dz++) {
+            mask[(y + dy) * sizeZ + z + dz] = null;
+          }
+        }
+
+        const buf = getOrCreateBuffer(buffers, id);
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const xPlane = wx * VOXEL_SIZE;
+        const yA = wy * VOXEL_SIZE;
+        const yB = (wy + h) * VOXEL_SIZE;
+        const zA = wz * VOXEL_SIZE;
+        const zB = (wz + w) * VOXEL_SIZE;
+
+        // Matches FACE_DEFS[1] winding/UV mapping (-X): u=z, v=y
+        pushQuad(
+          buf,
+          [-1, 0, 0],
+          [xPlane, yA, zB],
+          [xPlane, yB, zB],
+          [xPlane, yB, zA],
+          [xPlane, yA, zA],
+          [wz + w, wy],
+          [wz + w, wy + h],
+          [wz, wy + h],
+          [wz, wy],
+        );
+
+        z += w;
+      }
+    }
+  }
+
+  // +Y faces (sweep y, mask in (x,z))
+  for (let y = 0; y < sizeY; y++) {
+    mask.length = sizeX * sizeZ;
+    let mi = 0;
+    for (let x = 0; x < sizeX; x++) {
+      for (let z = 0; z < sizeZ; z++) {
+        const id = voxelId(x, y, z);
+        const matDef = getMaterial(id);
+        if (!matDef.solid) {
+          mask[mi++] = null;
+          continue;
+        }
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const nx = wx;
+        const ny = wy + 1;
+        const nz = wz;
+        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
+      }
+    }
+
+    for (let x = 0; x < sizeX; x++) {
+      for (let z = 0; z < sizeZ;) {
+        const id = mask[x * sizeZ + z];
+        if (!id) {
+          z++;
+          continue;
+        }
+        let w = 1;
+        while (z + w < sizeZ && mask[x * sizeZ + z + w] === id) w++;
+        let h = 1;
+        outer: for (; x + h < sizeX; h++) {
+          for (let k = 0; k < w; k++) {
+            if (mask[(x + h) * sizeZ + z + k] !== id) break outer;
+          }
+        }
+        for (let dx = 0; dx < h; dx++) {
+          for (let dz = 0; dz < w; dz++) {
+            mask[(x + dx) * sizeZ + z + dz] = null;
+          }
+        }
+
+        const buf = getOrCreateBuffer(buffers, id);
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const yPlane = (wy + 1) * VOXEL_SIZE;
+        const xA = wx * VOXEL_SIZE;
+        const xB = (wx + h) * VOXEL_SIZE;
+        const zA = wz * VOXEL_SIZE;
+        const zB = (wz + w) * VOXEL_SIZE;
+
+        // Matches FACE_DEFS[2] winding/UV mapping (+Y): u=x, v=z (with z flipped in vertex order)
+        pushQuad(
+          buf,
+          [0, 1, 0],
+          [xA, yPlane, zB],
+          [xB, yPlane, zB],
+          [xB, yPlane, zA],
+          [xA, yPlane, zA],
+          [wx, wz + w],
+          [wx + h, wz + w],
+          [wx + h, wz],
+          [wx, wz],
+        );
+
+        z += w;
+      }
+    }
+  }
+
+  // -Y faces (sweep y, mask in (x,z))
+  for (let y = 0; y < sizeY; y++) {
+    mask.length = sizeX * sizeZ;
+    let mi = 0;
+    for (let x = 0; x < sizeX; x++) {
+      for (let z = 0; z < sizeZ; z++) {
+        const id = voxelId(x, y, z);
+        const matDef = getMaterial(id);
+        if (!matDef.solid) {
+          mask[mi++] = null;
+          continue;
+        }
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const nx = wx;
+        const ny = wy - 1;
+        const nz = wz;
+        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
+      }
+    }
+
+    for (let x = 0; x < sizeX; x++) {
+      for (let z = 0; z < sizeZ;) {
+        const id = mask[x * sizeZ + z];
+        if (!id) {
+          z++;
+          continue;
+        }
+        let w = 1;
+        while (z + w < sizeZ && mask[x * sizeZ + z + w] === id) w++;
+        let h = 1;
+        outer: for (; x + h < sizeX; h++) {
+          for (let k = 0; k < w; k++) {
+            if (mask[(x + h) * sizeZ + z + k] !== id) break outer;
+          }
+        }
+        for (let dx = 0; dx < h; dx++) {
+          for (let dz = 0; dz < w; dz++) {
+            mask[(x + dx) * sizeZ + z + dz] = null;
+          }
+        }
+
+        const buf = getOrCreateBuffer(buffers, id);
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const yPlane = wy * VOXEL_SIZE;
+        const xA = wx * VOXEL_SIZE;
+        const xB = (wx + h) * VOXEL_SIZE;
+        const zA = wz * VOXEL_SIZE;
+        const zB = (wz + w) * VOXEL_SIZE;
+
+        // Matches FACE_DEFS[3] winding/UV mapping (-Y): u=x, v=z
+        pushQuad(
+          buf,
+          [0, -1, 0],
+          [xA, yPlane, zA],
+          [xB, yPlane, zA],
+          [xB, yPlane, zB],
+          [xA, yPlane, zB],
+          [wx, wz],
+          [wx + h, wz],
+          [wx + h, wz + w],
+          [wx, wz + w],
+        );
+
+        z += w;
+      }
+    }
+  }
+
+  // +Z faces (sweep z, mask in (x,y))
+  for (let z = 0; z < sizeZ; z++) {
+    mask.length = sizeX * sizeY;
+    let mi = 0;
+    for (let x = 0; x < sizeX; x++) {
+      for (let y = 0; y < sizeY; y++) {
+        const id = voxelId(x, y, z);
+        const matDef = getMaterial(id);
+        if (!matDef.solid) {
+          mask[mi++] = null;
+          continue;
+        }
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const nx = wx;
+        const ny = wy;
+        const nz = wz + 1;
+        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
+      }
+    }
+
+    for (let x = 0; x < sizeX; x++) {
+      for (let y = 0; y < sizeY;) {
+        const id = mask[x * sizeY + y];
+        if (!id) {
+          y++;
+          continue;
+        }
+        let w = 1;
+        while (y + w < sizeY && mask[x * sizeY + y + w] === id) w++;
+        let h = 1;
+        outer: for (; x + h < sizeX; h++) {
+          for (let k = 0; k < w; k++) {
+            if (mask[(x + h) * sizeY + y + k] !== id) break outer;
+          }
+        }
+        for (let dx = 0; dx < h; dx++) {
+          for (let dy = 0; dy < w; dy++) {
+            mask[(x + dx) * sizeY + y + dy] = null;
+          }
+        }
+
+        const buf = getOrCreateBuffer(buffers, id);
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const zPlane = (wz + 1) * VOXEL_SIZE;
+        const xA = wx * VOXEL_SIZE;
+        const xB = (wx + h) * VOXEL_SIZE;
+        const yA = wy * VOXEL_SIZE;
+        const yB = (wy + w) * VOXEL_SIZE;
+
+        // Matches FACE_DEFS[4] winding/UV mapping (+Z): u=x, v=y
+        pushQuad(
+          buf,
+          [0, 0, 1],
+          [xB, yA, zPlane],
+          [xB, yB, zPlane],
+          [xA, yB, zPlane],
+          [xA, yA, zPlane],
+          [wx + h, wy],
+          [wx + h, wy + w],
+          [wx, wy + w],
+          [wx, wy],
+        );
+
+        y += w;
+      }
+    }
+  }
+
+  // -Z faces (sweep z, mask in (x,y))
+  for (let z = 0; z < sizeZ; z++) {
+    mask.length = sizeX * sizeY;
+    let mi = 0;
+    for (let x = 0; x < sizeX; x++) {
+      for (let y = 0; y < sizeY; y++) {
+        const id = voxelId(x, y, z);
+        const matDef = getMaterial(id);
+        if (!matDef.solid) {
+          mask[mi++] = null;
+          continue;
+        }
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const nx = wx;
+        const ny = wy;
+        const nz = wz - 1;
+        mask[mi++] = shouldRenderFace(grid, wx, wy, wz, nx, ny, nz) ? id : null;
+      }
+    }
+
+    for (let x = 0; x < sizeX; x++) {
+      for (let y = 0; y < sizeY;) {
+        const id = mask[x * sizeY + y];
+        if (!id) {
+          y++;
+          continue;
+        }
+        let w = 1;
+        while (y + w < sizeY && mask[x * sizeY + y + w] === id) w++;
+        let h = 1;
+        outer: for (; x + h < sizeX; h++) {
+          for (let k = 0; k < w; k++) {
+            if (mask[(x + h) * sizeY + y + k] !== id) break outer;
+          }
+        }
+        for (let dx = 0; dx < h; dx++) {
+          for (let dy = 0; dy < w; dy++) {
+            mask[(x + dx) * sizeY + y + dy] = null;
+          }
+        }
+
+        const buf = getOrCreateBuffer(buffers, id);
+        const wx = x0 + x;
+        const wy = y0 + y;
+        const wz = z0 + z;
+        const zPlane = wz * VOXEL_SIZE;
+        const xA = wx * VOXEL_SIZE;
+        const xB = (wx + h) * VOXEL_SIZE;
+        const yA = wy * VOXEL_SIZE;
+        const yB = (wy + w) * VOXEL_SIZE;
+
+        // Matches FACE_DEFS[5] winding/UV mapping (-Z): u=x, v=y
+        pushQuad(
+          buf,
+          [0, 0, -1],
+          [xA, yA, zPlane],
+          [xA, yB, zPlane],
+          [xB, yB, zPlane],
+          [xB, yA, zPlane],
+          [wx, wy],
+          [wx, wy + w],
+          [wx + h, wy + w],
+          [wx + h, wy],
+        );
+
+        y += w;
       }
     }
   }
