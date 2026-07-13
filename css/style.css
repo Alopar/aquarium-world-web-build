@@ -1612,14 +1612,40 @@ body.is-mobile #hotbar {
   visibility: hidden;
 }
 
+.mobile-move-pad {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 0;
+}
+
+.mobile-look-pad {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 0;
+}
+
 .mobile-stick {
   position: absolute;
   left: max(16px, env(safe-area-inset-left, 0px));
   bottom: max(20px, env(safe-area-inset-bottom, 0px));
   width: 118px;
   height: 118px;
-  pointer-events: auto;
-  touch-action: none;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mobile-stick--visual {
+  /* fixed decoration; input comes from mobile-move-pad */
 }
 
 .mobile-stick__ring {
@@ -1646,33 +1672,24 @@ body.is-mobile #hotbar {
 }
 
 .mobile-stick--look {
-  position: relative;
-  left: auto;
-  bottom: auto;
-}
-
-.mobile-right-cluster {
-  position: absolute;
-  right: max(16px, env(safe-area-inset-right, 0px));
-  bottom: max(20px, env(safe-area-inset-bottom, 0px));
-  display: grid;
-  grid-template-columns: auto 118px;
-  align-items: end;
-  gap: 10px;
-  pointer-events: none;
+  display: none;
 }
 
 .mobile-action-select {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: auto;
+  position: absolute;
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  width: 188px;
+  height: 188px;
+  pointer-events: none;
   touch-action: none;
+  z-index: 2;
 }
 
 .mobile-action-btn {
-  width: 52px;
-  height: 52px;
+  position: absolute;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   border: 1px solid rgba(155, 127, 212, 0.45);
   background: rgba(14, 10, 28, 0.72);
@@ -1686,6 +1703,7 @@ body.is-mobile #hotbar {
   box-shadow: 0 0 16px rgba(155, 127, 212, 0.12);
   -webkit-tap-highlight-color: transparent;
   touch-action: none;
+  pointer-events: auto;
 }
 
 .mobile-action-btn:active {
@@ -1701,6 +1719,8 @@ body.is-mobile #hotbar {
 }
 
 .mobile-action-btn--dig {
+  left: 0;
+  bottom: 36px;
   border-color: rgba(220, 120, 120, 0.5);
 }
 
@@ -1710,7 +1730,17 @@ body.is-mobile #hotbar {
   color: #ffb0b0;
 }
 
+.mobile-action-btn--jump {
+  right: 28px;
+  bottom: 32px;
+  width: 76px;
+  height: 76px;
+  font-size: 13px;
+}
+
 .mobile-action-btn--use {
+  right: 28px;
+  top: 0;
   border-color: rgba(201, 168, 76, 0.45);
 }
 
@@ -1721,14 +1751,6 @@ body.is-mobile #hotbar {
 }
 
 .mobile-right-cluster .mobile-stick {
-  pointer-events: auto;
-}
-
-.mobile-look {
-  display: none;
-}
-
-.mobile-actions {
   display: none;
 }
 
@@ -1742,6 +1764,7 @@ body.is-mobile #hotbar {
   justify-content: flex-end;
   max-width: 220px;
   pointer-events: auto;
+  z-index: 3;
 }
 
 .mobile-tool {

@@ -37,6 +37,7 @@ import { ChunkVisibilitySystem } from './systems/chunk-visibility.js';
 import { MeshMergeSystem } from './systems/mesh-merge.js';
 import { applyUserFog } from './systems/fog-controller.js';
 import { applyAquariumDecorEnabled } from './systems/aquarium-decor.js';
+import { applyPixelScale } from './systems/pixel-scale.js';
 
 export class App {
   constructor({
@@ -266,7 +267,14 @@ export class App {
       this.onOrientationChange(this.orientationGate?.isBlocking ?? false);
     }
 
-    this.unbindResize = bindResize(this.renderer, this.camera);
+    this.unbindResize = bindResize(this.renderer, this.camera, () => {
+      applyPixelScale(this.renderer, this.quality.pixelScale, this.quality.lowQuality);
+    });
+    applyPixelScale(this.renderer, this.quality.pixelScale, this.quality.lowQuality);
+    this.world.blockLights.setEnabled(this.quality.blockLightsEnabled !== false);
+    if (this.quality.blockLightsEnabled !== false) {
+      this.world.blockLights.resyncFromGrid(this.world.grid);
+    }
     // Warm MeshStandard shaders with the fixed block-light pool so placing
     // lumen mid-game does not trigger a WebGL program recompile hitch.
     this.renderer.compile(this.scene, this.camera);

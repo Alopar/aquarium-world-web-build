@@ -29,11 +29,28 @@ export class BlockLightSystem {
       const light = new THREE.PointLight(0xffd078, 0, 16, 2);
       light.castShadow = false;
       light.name = `block-light-pool-${i}`;
-      // Park far below the world; intensity 0 but still counted by the renderer.
       light.position.set(0, -1000, 0);
       scene.add(light);
       this.pool.push(light);
       this.free.push(light);
+    }
+    this.enabled = true;
+  }
+
+  setEnabled(enabled) {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    this.clear();
+    if (!enabled) {
+      for (const light of this.pool) {
+        this.scene.remove(light);
+      }
+      return;
+    }
+    for (const light of this.pool) {
+      if (!light.parent) this.scene.add(light);
+      light.intensity = 0;
+      light.position.set(0, -1000, 0);
     }
   }
 
@@ -42,6 +59,7 @@ export class BlockLightSystem {
    * @param {import('../world/voxel-grid.js').VoxelGrid} grid
    */
   syncAt(grid, x, y, z) {
+    if (!this.enabled) return;
     const key = lightKey(x, y, z);
     const mat = getMaterial(grid.get(x, y, z));
     const def = mat.light;

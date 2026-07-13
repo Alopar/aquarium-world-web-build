@@ -76,14 +76,15 @@ export function createLights(scene, options = {}) {
   return { ambient, sun, fill, shadowsEnabled: shadows };
 }
 
-export function bindResize(renderer, camera) {
-  function onResize() {
+export function bindResize(renderer, camera, onResize) {
+  function handleResize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
+    onResize?.();
   }
-  window.addEventListener('resize', onResize);
-  return () => window.removeEventListener('resize', onResize);
+  window.addEventListener('resize', handleResize);
+  return () => window.removeEventListener('resize', handleResize);
 }

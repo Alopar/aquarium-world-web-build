@@ -2,6 +2,7 @@ import { FLUID, GAS } from './constants.js';
 import { setAquariumTankGlassMode } from './world/glass-tank.js';
 import { applyUserFog, clampFogViewDistance } from './systems/fog-controller.js';
 import { applyAquariumDecorEnabled } from './systems/aquarium-decor.js';
+import { applyPixelScale, clampPixelScale } from './systems/pixel-scale.js';
 import {
   DESKTOP_QUALITY,
   MOBILE_QUALITY,
@@ -21,6 +22,9 @@ export function applyGraphicsSettings(app, patch) {
   const patchNorm = { ...patch };
   if (patchNorm.fogViewDistance != null) {
     patchNorm.fogViewDistance = clampFogViewDistance(patchNorm.fogViewDistance);
+  }
+  if (patchNorm.pixelScale != null) {
+    patchNorm.pixelScale = clampPixelScale(patchNorm.pixelScale);
   }
   const next = { ...prev, ...patchNorm };
   const world = app.world;
@@ -57,6 +61,23 @@ export function applyGraphicsSettings(app, patch) {
 
   if (next.flatColorsTerrain !== prev.flatColorsTerrain && world?.meshBuilder) {
     world.meshBuilder.setFlatColors(next.flatColorsTerrain);
+  }
+
+  if (next.unlitTerrain !== prev.unlitTerrain && world?.meshBuilder) {
+    world.meshBuilder.setUnlitTerrain(!!next.unlitTerrain);
+    app.meshMerge?.refreshMaterials(world.meshBuilder);
+  }
+
+  if (next.blockLightsEnabled !== prev.blockLightsEnabled && world?.blockLights) {
+    const on = next.blockLightsEnabled !== false;
+    world.blockLights.setEnabled(on);
+    if (on && world.grid) {
+      world.blockLights.resyncFromGrid(world.grid);
+    }
+  }
+
+  if (next.pixelScale !== prev.pixelScale && app.renderer) {
+    applyPixelScale(app.renderer, next.pixelScale, next.lowQuality);
   }
 
   if (next.foliageEnabled !== prev.foliageEnabled && world?.grassFoliageBuilder) {

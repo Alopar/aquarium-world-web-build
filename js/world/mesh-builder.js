@@ -65,7 +65,7 @@ function parseFlatMaskKey(maskKey) {
   };
 }
 
-function createMeshMaterial(materialDef, useLambert = false) {
+function createMeshMaterial(materialDef, { lambert = false, unlit = false } = {}) {
   const texture = materialDef.texture ? getBlockTexture(materialDef.texture) : null;
   const params = {
     color: texture ? 0xffffff : materialDef.color,
@@ -75,11 +75,14 @@ function createMeshMaterial(materialDef, useLambert = false) {
   if (texture) {
     params.map = texture;
   }
+  if (unlit) {
+    return new THREE.MeshBasicMaterial(params);
+  }
   if (materialDef.emissive != null) {
     params.emissive = materialDef.emissive;
     params.emissiveIntensity = materialDef.emissiveIntensity ?? 0.6;
   }
-  if (useLambert) {
+  if (lambert) {
     return new THREE.MeshLambertMaterial(params);
   }
   params.roughness = 0.92;
@@ -372,12 +375,14 @@ export class MeshBuilder {
     maxChunksPerFrame = MAX_CHUNKS_REBUILD_PER_FRAME,
     lambertTerrain = false,
     flatColors = false,
+    unlitTerrain = false,
   } = {}) {
     this.grid = grid;
     this.chunkSize = chunkSize;
     this.maxChunksPerFrame = maxChunksPerFrame;
     this.lambertTerrain = lambertTerrain;
     this.flatColors = flatColors;
+    this.unlitTerrain = unlitTerrain;
     this.group = new THREE.Group();
     this.group.name = 'voxel-meshes';
     this.chunks = new Map();
@@ -413,9 +418,10 @@ export class MeshBuilder {
     this.threeMaterials.clear();
 
     if (this.flatColors) {
-      this.threeMaterials.set(FLAT_OPAQUE_KEY, new THREE.MeshLambertMaterial({
-        vertexColors: true,
-      }));
+      const flatMat = this.unlitTerrain
+        ? new THREE.MeshBasicMaterial({ vertexColors: true })
+        : new THREE.MeshLambertMaterial({ vertexColors: true });
+      this.threeMaterials.set(FLAT_OPAQUE_KEY, flatMat);
       this._atlasEligibleId = () => false;
       return;
     }
@@ -423,13 +429,18 @@ export class MeshBuilder {
     const solids = listSolidMaterials();
     const atlasTex = getSolidAtlasTexture();
     if (atlasTex) {
-      const atlasMat = this.lambertTerrain
-        ? new THREE.MeshLambertMaterial({ map: atlasTex, color: 0xffffff })
-        : new THREE.MeshStandardMaterial({
+      let atlasMat;
+      if (this.unlitTerrain) {
+        atlasMat = new THREE.MeshBasicMaterial({ map: atlasTex, color: 0xffffff });
+      } else if (this.lambertTerrain) {
+        atlasMat = new THREE.MeshLambertMaterial({ map: atlasTex, color: 0xffffff });
+      } else {
+        atlasMat = new THREE.MeshStandardMaterial({
           map: atlasTex,
           color: 0xffffff,
           roughness: 0.92,
         });
+      }
       this.threeMaterials.set(ATLAS_KEY, atlasMat);
     }
 
@@ -443,7 +454,10 @@ export class MeshBuilder {
 
     for (const mat of solids) {
       if (isAtlasEligible(mat)) continue;
-      this.threeMaterials.set(mat.id, createMeshMaterial(mat, this.lambertTerrain));
+      this.threeMaterials.set(mat.id, createMeshMaterial(mat, {
+        lambert: this.lambertTerrain,
+        unlit: this.unlitTerrain,
+      }));
     }
 
     this._atlasEligibleId = (id) => {
@@ -469,6 +483,22 @@ export class MeshBuilder {
     this._initMaterials();
     this._clearChunkMeshes();
     this.rebuildAll();
+  }
+
+  setUnlitTerrain(unlit) {
+    if (this.unlitTerrain === unlit) return;
+    this.unlitTerrain = unlit;
+    this._initMaterials();
+    this._refreshChunkMaterials();
+  }
+
+  _refreshChunkMaterials() {
+    for (const chunk of this.chunks.values()) {
+      for (const [key, mesh] of chunk.meshes) {
+        const mat = this.threeMaterials.get(key);
+        if (mat) mesh.material = mat;
+      }
+    }
   }
 
   _clearChunkMeshes() {

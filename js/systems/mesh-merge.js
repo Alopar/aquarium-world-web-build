@@ -284,6 +284,19 @@ export class MeshMergeSystem {
     return { ...this.stats };
   }
 
+  /** After terrain material swap (unlit A/B). */
+  refreshMaterials(meshBuilder) {
+    if (!meshBuilder) return;
+    const key = meshBuilder.getPrimaryMergeKey();
+    const mat = meshBuilder.threeMaterials.get(key);
+    if (!mat) return;
+    for (const entry of this.supers.values()) {
+      if (entry.merged && entry.mesh) {
+        entry.mesh.material = mat;
+      }
+    }
+  }
+
   dispose(meshBuilder) {
     this.detach(meshBuilder);
     this.supers.clear();

@@ -1,5 +1,6 @@
 import { FLUID, GAS, WEATHER } from './constants.js';
 import { FOG_VIEW } from './systems/fog-controller.js';
+import { PIXEL_SCALE } from './systems/pixel-scale.js';
 
 const STORAGE_KEY = 'aquarium-graphics-v1';
 
@@ -20,6 +21,9 @@ export const DESKTOP_QUALITY = {
   fogEnabled: false,
   fogViewDistance: FOG_VIEW.default,
   chunkMeshMerge: true,
+  unlitTerrain: false,
+  blockLightsEnabled: true,
+  pixelScale: 1,
 };
 
 export const MOBILE_QUALITY = {
@@ -39,6 +43,9 @@ export const MOBILE_QUALITY = {
   fogEnabled: false,
   fogViewDistance: 45,
   chunkMeshMerge: true,
+  unlitTerrain: false,
+  blockLightsEnabled: true,
+  pixelScale: 1,
 };
 
 /** UI metadata for the graphics panel. */
@@ -117,6 +124,16 @@ export const GRAPHICS_OPTIONS = [
     label: 'Плотный туман',
     hint: 'Линейный туман + отсечение дальних чанков',
   },
+  {
+    key: 'unlitTerrain',
+    label: 'Unlit terrain (A/B)',
+    hint: 'MeshBasic — без расчёта света на террейне',
+  },
+  {
+    key: 'blockLightsEnabled',
+    label: 'Block lights (A/B)',
+    hint: 'PointLight люменов; выкл убирает пул из сцены',
+  },
 ];
 
 export const GRAPHICS_SLIDERS = [
@@ -129,6 +146,15 @@ export const GRAPHICS_SLIDERS = [
     step: 1,
     unit: 'м',
     requires: 'fogEnabled',
+  },
+  {
+    key: 'pixelScale',
+    label: 'Pixel scale (A/B)',
+    hint: 'Меньше — меньше пикселей, выше FPS',
+    min: PIXEL_SCALE.min,
+    max: PIXEL_SCALE.max,
+    step: PIXEL_SCALE.step,
+    unit: '×',
   },
 ];
 

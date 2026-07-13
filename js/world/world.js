@@ -23,6 +23,7 @@ export class AquariumWorld {
     this.meshBuilder = new MeshBuilder(this.grid, {
       lambertTerrain: !!quality.lambertTerrain,
       flatColors: !!quality.flatColorsTerrain,
+      unlitTerrain: !!quality.unlitTerrain,
     });
     this.fluidMeshBuilder = new FluidMeshBuilder(this.grid, this.fluidField, {
       enabled: quality.fluidMeshEnabled !== false,
