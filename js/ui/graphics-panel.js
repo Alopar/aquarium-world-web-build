@@ -191,12 +191,6 @@ export class GraphicsPanel {
       if (row) row.classList.toggle('graphics-panel__slider-row--disabled', !enabled);
       if (input) input.disabled = !enabled;
     }
-    const lambertInput = this.toggleInputs.get('lambertTerrain');
-    if (lambertInput) {
-      const flatOn = !!quality.flatColorsTerrain;
-      lambertInput.disabled = flatOn;
-      lambertInput.closest('.graphics-panel__row')?.classList.toggle('graphics-panel__row--disabled', flatOn);
-    }
   }
 
   onSlider(key, value) {
@@ -207,9 +201,6 @@ export class GraphicsPanel {
 
   onToggle(key, checked) {
     if (!this.app) return;
-    if (key === 'flatColorsTerrain' && checked) {
-      setGraphicsOption(this.app, 'lambertTerrain', false);
-    }
     setGraphicsOption(this.app, key, checked);
     this.syncFromQuality();
   }
@@ -232,6 +223,7 @@ export class GraphicsPanel {
     if (e.code !== TOGGLE_KEY || e.repeat) return;
     if (this.app?.state !== 'playing') return;
     if (this.app.inventoryPanel?.open || this.app.craftingPanel?.open) return;
+    if (this.app.godPanel?.open) return;
     e.preventDefault();
     this.toggle();
   }
@@ -256,7 +248,8 @@ export class GraphicsPanel {
     this.root.classList.add('hidden');
     this.root.setAttribute('aria-hidden', 'true');
     if (this.app?.state === 'playing') {
-      const uiOpen = this.app.inventoryPanel?.open || this.app.craftingPanel?.open;
+      const uiOpen = this.app.inventoryPanel?.open || this.app.craftingPanel?.open
+        || this.app.godPanel?.open;
       if (this.app.blockInteraction && !uiOpen) {
         this.app.blockInteraction.inputBlocked = false;
       }

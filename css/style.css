@@ -104,6 +104,23 @@ body {
   margin-top: 18px;
 }
 
+.loader-progress {
+  width: min(240px, 70vw);
+  height: 4px;
+  margin: 14px auto 0;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.loader-progress__bar {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-teal), var(--accent-gold));
+  transition: width 0.25s ease;
+}
+
 .loader-scene {
   position: relative;
   width: 132px;
@@ -1548,6 +1565,160 @@ body.is-mobile #graphics-panel {
   touch-action: pan-y;
 }
 
+/* ── God panel ── */
+
+.god-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.god-panel__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 6, 14, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.god-panel__window {
+  position: relative;
+  width: min(400px, 100%);
+  max-height: min(90vh, 560px);
+  overflow: auto;
+  padding: 18px 20px 16px;
+  background: var(--panel);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  box-shadow:
+    0 0 40px rgba(212, 175, 55, 0.1),
+    0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.god-panel__title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: #e8c547;
+  margin-bottom: 6px;
+}
+
+.god-panel__hint {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.god-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.god-panel__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(212, 175, 55, 0.15);
+  cursor: pointer;
+}
+
+.god-panel__row:hover {
+  border-color: rgba(212, 175, 55, 0.3);
+}
+
+.god-panel__checkbox {
+  margin-top: 3px;
+  flex-shrink: 0;
+  accent-color: #e8c547;
+}
+
+.god-panel__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.god-panel__row-label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.god-panel__row-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.god-panel__force-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.god-panel__force-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.god-panel__force-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.god-panel__force-btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.god-panel__force-btn:hover {
+  background: rgba(212, 175, 55, 0.12);
+  border-color: rgba(212, 175, 55, 0.35);
+}
+
+.god-panel__force-btn--active {
+  background: rgba(212, 175, 55, 0.2);
+  border-color: rgba(212, 175, 55, 0.55);
+  color: #f5e6a8;
+}
+
+.god-panel__close {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(212, 175, 55, 0.12);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.god-panel__close:hover {
+  background: rgba(212, 175, 55, 0.22);
+}
+
+body.is-mobile #god-panel {
+  touch-action: pan-y;
+}
+
 /* ── Mobile controls & orientation gate ── */
 
 body.is-mobile {
@@ -1565,7 +1736,8 @@ body.is-mobile #seed-input {
 
 body.is-mobile #inventory-panel,
 body.is-mobile #crafting-panel,
-body.is-mobile #graphics-panel {
+body.is-mobile #graphics-panel,
+body.is-mobile #god-panel {
   touch-action: pan-y;
 }
 
@@ -1599,10 +1771,23 @@ body.is-mobile #hotbar {
   transform-origin: center bottom;
 }
 
+.mobile-touch-zones {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.mobile-touch-zones.mobile-controls--ui-hidden,
+.mobile-touch-zones.mobile-controls--dimmed {
+  opacity: 0;
+  visibility: hidden;
+}
+
 .mobile-controls {
   position: fixed;
   inset: 0;
-  z-index: 8;
+  z-index: 6;
   pointer-events: none;
 }
 
@@ -1787,6 +1972,16 @@ body.is-mobile #hotbar {
   color: var(--accent);
 }
 
+.mobile-tool--god {
+  border-color: rgba(212, 175, 55, 0.45);
+  color: #e8c547;
+}
+
+.mobile-tool--god:active {
+  border-color: #e8c547;
+  color: #f5e6a8;
+}
+
 .orientation-gate {
   position: fixed;
   inset: 0;
@@ -1879,7 +2074,8 @@ body.is-mobile #hotbar {
   45%, 60% { opacity: 1; }
 }
 
-body.orientation-blocked #mobile-controls {
+body.orientation-blocked #mobile-controls,
+body.orientation-blocked #mobile-touch-zones {
   visibility: hidden !important;
   pointer-events: none !important;
 }

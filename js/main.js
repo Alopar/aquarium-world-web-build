@@ -16,6 +16,7 @@ const placeModeEl = document.getElementById('hud-place-mode');
 const profilerEl = document.getElementById('profiler');
 const inventoryEl = document.getElementById('inventory-panel');
 const graphicsPanelEl = document.getElementById('graphics-panel');
+const godPanelEl = document.getElementById('god-panel');
 const graphicsBtnEl = document.getElementById('btn-graphics');
 const craftingEl = document.getElementById('crafting-panel');
 const mobileControlsEl = document.getElementById('mobile-controls');
@@ -43,6 +44,7 @@ await runBootLoader({ loaderEl, menuEl });
 
 new App({
   canvas,
+  loaderEl,
   menuEl,
   startBtn,
   seedInput,
@@ -55,6 +57,7 @@ new App({
   inventoryEl,
   craftingEl,
   graphicsPanelEl,
+  godPanelEl,
   graphicsBtnEl,
   mobileControlsEl,
   orientationGateEl,

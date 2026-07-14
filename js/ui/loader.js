@@ -30,3 +30,43 @@ export async function runBootLoader({ loaderEl, menuEl }) {
   loaderEl.classList.add('hidden');
   menuEl.classList.remove('hidden');
 }
+
+export class GameLoader {
+  constructor(loaderEl) {
+    this.loaderEl = loaderEl;
+    this.statusEl = loaderEl?.querySelector('.loader-status');
+    this.progressEl = loaderEl?.querySelector('.loader-progress__bar');
+  }
+
+  show() {
+    if (!this.loaderEl) return;
+    this.loaderEl.classList.remove('hidden', 'loader--out');
+    this.setProgress(0);
+    this.setStatus('Подготовка...');
+  }
+
+  setStatus(text) {
+    if (this.statusEl) this.statusEl.textContent = text;
+  }
+
+  setProgress(ratio) {
+    if (this.progressEl) {
+      const pct = Math.max(0, Math.min(100, ratio * 100));
+      this.progressEl.style.width = `${pct}%`;
+    }
+  }
+
+  tick() {
+    return new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+
+  async hide() {
+    if (!this.loaderEl) return;
+    this.setProgress(1);
+    this.setStatus('Готово');
+    this.loaderEl.classList.add('loader--out');
+    await delay(FADE_MS);
+    this.loaderEl.classList.add('hidden');
+    this.loaderEl.classList.remove('loader--out');
+  }
+}

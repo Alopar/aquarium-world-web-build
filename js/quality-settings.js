@@ -10,19 +10,11 @@ export const DESKTOP_QUALITY = {
   rainEnabled: true,
   fluidTicksPerFrame: FLUID.maxTicksPerFrame,
   gasTicksPerFrame: GAS.maxTicksPerFrame,
-  simpleGlass: false,
   lambertTerrain: false,
-  flatColorsTerrain: false,
   foliageEnabled: true,
   fluidMeshEnabled: true,
-  simpleSmokeRender: false,
-  chunkFrustumCull: true,
-  chunkOcclusionCull: true,
   fogEnabled: false,
   fogViewDistance: FOG_VIEW.default,
-  chunkMeshMerge: true,
-  unlitTerrain: false,
-  blockLightsEnabled: true,
   pixelScale: 1,
 };
 
@@ -32,19 +24,11 @@ export const MOBILE_QUALITY = {
   rainEnabled: false,
   fluidTicksPerFrame: 0,
   gasTicksPerFrame: 0,
-  simpleGlass: true,
   lambertTerrain: true,
-  flatColorsTerrain: true,
   foliageEnabled: false,
   fluidMeshEnabled: false,
-  simpleSmokeRender: true,
-  chunkFrustumCull: true,
-  chunkOcclusionCull: true,
   fogEnabled: false,
   fogViewDistance: 45,
-  chunkMeshMerge: true,
-  unlitTerrain: false,
-  blockLightsEnabled: true,
   pixelScale: 1,
 };
 
@@ -75,19 +59,9 @@ export const GRAPHICS_OPTIONS = [
     maxTicks: GAS.maxTicksPerFrame,
   },
   {
-    key: 'simpleGlass',
-    label: 'Упрощённое стекло',
-    hint: 'Basic вместо Physical',
-  },
-  {
     key: 'lambertTerrain',
     label: 'Lambert-материалы мира',
     hint: 'Проще Standard PBR (только текстуры)',
-  },
-  {
-    key: 'flatColorsTerrain',
-    label: 'Flat colors + greedy mesh',
-    hint: 'Без текстур, 1 Lambert + шахматка вершин',
   },
   {
     key: 'foliageEnabled',
@@ -100,39 +74,9 @@ export const GRAPHICS_OPTIONS = [
     hint: 'Fluid shader на GPU',
   },
   {
-    key: 'simpleSmokeRender',
-    label: 'Простой дым (блоки)',
-    hint: 'Вместо volumetric raymarch',
-  },
-  {
-    key: 'chunkFrustumCull',
-    label: 'Frustum culling чанков',
-    hint: 'AABB вне камеры — не рисовать',
-  },
-  {
-    key: 'chunkOcclusionCull',
-    label: 'Occlusion (voxel DDA)',
-    hint: '5 лучей на верх чанка, раз в 2 кадра',
-  },
-  {
-    key: 'chunkMeshMerge',
-    label: 'Склейка чанков (2³)',
-    hint: 'Greedy super-mesh, меньше draw/tri',
-  },
-  {
     key: 'fogEnabled',
     label: 'Плотный туман',
     hint: 'Линейный туман + отсечение дальних чанков',
-  },
-  {
-    key: 'unlitTerrain',
-    label: 'Unlit terrain (A/B)',
-    hint: 'MeshBasic — без расчёта света на террейне',
-  },
-  {
-    key: 'blockLightsEnabled',
-    label: 'Block lights (A/B)',
-    hint: 'PointLight люменов; выкл убирает пул из сцены',
   },
 ];
 

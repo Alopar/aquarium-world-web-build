@@ -120,8 +120,12 @@ export class PlayerController {
     this.syncCamera();
   }
 
-  get isLocked() {
+  get canControl() {
     return this.controls.isLocked || this.touchActive;
+  }
+
+  get isLocked() {
+    return this.canControl;
   }
 
   get modeLabel() {
@@ -201,7 +205,7 @@ export class PlayerController {
     return state;
   }
 
-  updateSwim(dt) {
+  updateSwim(dt, allowInput = true) {
     // Kill high fall speed on first contact with deep liquid.
     if (this.velocity.y < PLAYER.swimEnterDampThreshold) {
       this.velocity.y *= PLAYER.swimEnterDamp;
@@ -219,10 +223,12 @@ export class PlayerController {
     this.updateFlatDirections();
 
     this.wishVelocity.set(0, 0, 0);
-    if (this.keys.has('KeyW')) this.wishVelocity.add(this.flatForward);
-    if (this.keys.has('KeyS')) this.wishVelocity.sub(this.flatForward);
-    if (this.keys.has('KeyA')) this.wishVelocity.sub(this.right);
-    if (this.keys.has('KeyD')) this.wishVelocity.add(this.right);
+    if (allowInput) {
+      if (this.keys.has('KeyW')) this.wishVelocity.add(this.flatForward);
+      if (this.keys.has('KeyS')) this.wishVelocity.sub(this.flatForward);
+      if (this.keys.has('KeyA')) this.wishVelocity.sub(this.right);
+      if (this.keys.has('KeyD')) this.wishVelocity.add(this.right);
+    }
 
     const speed = this.getSwimSpeed();
     if (this.wishVelocity.lengthSq() > 0) {
@@ -231,8 +237,8 @@ export class PlayerController {
       this.velocity.z = this.wishVelocity.z;
     }
 
-    const up = this.keys.has('Space');
-    const down = this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+    const up = allowInput && this.keys.has('Space');
+    const down = allowInput && (this.keys.has('ControlLeft') || this.keys.has('ControlRight'));
 
     if (up && !down) {
       // From the bottom, Space gives a stronger push so you can break the surface.
@@ -246,17 +252,19 @@ export class PlayerController {
     this.landingImpactSpeed = 0;
   }
 
-  updateWalk(dt) {
+  updateWalk(dt, allowInput = true) {
     this.velocity.y -= PLAYER.gravity * dt;
     this.velocity.y = Math.max(this.velocity.y, -PHYSICS.maxFallSpeed);
 
     this.updateFlatDirections();
 
     this.wishVelocity.set(0, 0, 0);
-    if (this.keys.has('KeyW')) this.wishVelocity.add(this.flatForward);
-    if (this.keys.has('KeyS')) this.wishVelocity.sub(this.flatForward);
-    if (this.keys.has('KeyA')) this.wishVelocity.sub(this.right);
-    if (this.keys.has('KeyD')) this.wishVelocity.add(this.right);
+    if (allowInput) {
+      if (this.keys.has('KeyW')) this.wishVelocity.add(this.flatForward);
+      if (this.keys.has('KeyS')) this.wishVelocity.sub(this.flatForward);
+      if (this.keys.has('KeyA')) this.wishVelocity.sub(this.right);
+      if (this.keys.has('KeyD')) this.wishVelocity.add(this.right);
+    }
 
     if (this.wishVelocity.lengthSq() > 0) {
       this.wishVelocity.normalize().multiplyScalar(this.getMoveSpeed(PLAYER.walkSpeed));
@@ -268,7 +276,7 @@ export class PlayerController {
       this.velocity.z *= friction;
     }
 
-    if (this.keys.has('Space') && this.onGround) {
+    if (allowInput && this.keys.has('Space') && this.onGround) {
       this.velocity.y = PLAYER.jumpSpeed;
       this.onGround = false;
       this.sound?.resume();
@@ -297,18 +305,19 @@ export class PlayerController {
   }
 
   update(dt) {
-    if (!this.controls.isLocked && !this.touchActive) return;
+    const allowInput = this.canControl;
 
-    if (this.mode === 'walk') {
+    if (this.mode === 'fly') {
+      if (!allowInput) return;
+      this.inFluid = false;
+      this.updateFly();
+    } else {
       this.refreshFluidState();
       if (this.inFluid) {
-        this.updateSwim(dt);
+        this.updateSwim(dt, allowInput);
       } else {
-        this.updateWalk(dt);
+        this.updateWalk(dt, allowInput);
       }
-    } else {
-      this.inFluid = false;
-      this.updateFly(dt);
     }
 
     const collision = resolveMovement(

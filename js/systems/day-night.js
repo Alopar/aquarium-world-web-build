@@ -118,10 +118,25 @@ export class DayNightSystem {
     this.shadowsEnabled = lights.shadowsEnabled !== false;
     // Start in the morning so the first minutes are bright
     this.elapsed = DAY_NIGHT.cycleSeconds * 0.12;
+    this.cycleEnabled = true;
     this.undergroundFactor = 0;
     this.underwaterFactor = 0;
     this.phase = 0;
     this.dayAmount = 1;
+  }
+
+  /** @param {boolean} enabled */
+  setCycleEnabled(enabled) {
+    this.cycleEnabled = enabled;
+  }
+
+  /**
+   * @param {'dawn'|'day'|'dusk'|'night'} period
+   */
+  setPeriod(period) {
+    const phases = { dawn: 0, day: 0.25, dusk: 0.5, night: 0.75 };
+    const phase = phases[period] ?? 0.25;
+    this.elapsed = phase * DAY_NIGHT.cycleSeconds;
   }
 
   /**
@@ -131,7 +146,7 @@ export class DayNightSystem {
    * @param {import('../fluids/fluid-field.js').FluidField | null} fluidField
    */
   update(dt, player = null, spaceSky = null, fluidField = null) {
-    this.elapsed += dt;
+    if (this.cycleEnabled) this.elapsed += dt;
     const cycle = DAY_NIGHT.cycleSeconds;
     this.phase = (this.elapsed % cycle) / cycle;
 

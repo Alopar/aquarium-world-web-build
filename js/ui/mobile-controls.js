@@ -6,18 +6,20 @@ const STICK_DEADZONE = 0.22;
  * Touch controls: left half = floating move stick, right half = look pad + action buttons.
  */
 export class MobileControls {
-  constructor(root, { playerController, blockInteraction, inventoryPanel, craftingPanel, graphicsPanel } = {}) {
+  constructor(root, { touchRoot = null, playerController, blockInteraction, inventoryPanel, craftingPanel, graphicsPanel, godPanel } = {}) {
     this.root = root;
+    this.touchRoot = touchRoot ?? document.getElementById('mobile-touch-zones');
     this.playerController = playerController ?? null;
     this.blockInteraction = blockInteraction ?? null;
     this.inventoryPanel = inventoryPanel ?? null;
     this.craftingPanel = craftingPanel ?? null;
     this.graphicsPanel = graphicsPanel ?? null;
+    this.godPanel = godPanel ?? null;
 
-    this.movePad = root.querySelector('#mobile-move-pad');
-    this.lookPad = root.querySelector('#mobile-look-pad');
-    this.moveStick = root.querySelector('#mobile-move-stick');
-    this.moveKnob = root.querySelector('#mobile-move-knob');
+    this.movePad = this.touchRoot?.querySelector('#mobile-move-pad');
+    this.lookPad = this.touchRoot?.querySelector('#mobile-look-pad');
+    this.moveStick = this.touchRoot?.querySelector('#mobile-move-stick');
+    this.moveKnob = this.touchRoot?.querySelector('#mobile-move-knob');
     this.actionSelectEl = root.querySelector('#mobile-action-select');
     this.toolbarEl = root.querySelector('#mobile-toolbar');
 
@@ -60,18 +62,21 @@ export class MobileControls {
     this.toolbarEl?.addEventListener('click', this._onToolbarClick);
   }
 
-  setDeps({ playerController, blockInteraction, inventoryPanel, craftingPanel, graphicsPanel }) {
+  setDeps({ playerController, blockInteraction, inventoryPanel, craftingPanel, graphicsPanel, godPanel }) {
     if (playerController) this.playerController = playerController;
     if (blockInteraction) this.blockInteraction = blockInteraction;
     if (inventoryPanel) this.inventoryPanel = inventoryPanel;
     if (craftingPanel) this.craftingPanel = craftingPanel;
     if (graphicsPanel) this.graphicsPanel = graphicsPanel;
+    if (godPanel) this.godPanel = godPanel;
   }
 
   show() {
     this._visible = true;
     this.root.classList.remove('hidden');
     this.root.setAttribute('aria-hidden', 'false');
+    this.touchRoot?.classList.remove('hidden');
+    this.touchRoot?.setAttribute('aria-hidden', 'false');
     this.refreshMoveRadius();
     this.playerController?.activateTouch?.();
   }
@@ -80,16 +85,24 @@ export class MobileControls {
     this._visible = false;
     this.root.classList.add('hidden');
     this.root.setAttribute('aria-hidden', 'true');
+    this.touchRoot?.classList.add('hidden');
+    this.touchRoot?.setAttribute('aria-hidden', 'true');
     this.resetInput();
     this.playerController?.deactivateTouch?.();
   }
 
+  setLayerClass(className, add) {
+    for (const el of [this.root, this.touchRoot]) {
+      el?.classList.toggle(className, add);
+    }
+  }
+
   setGameplayActive(active) {
     if (active && this._visible) {
-      this.root.classList.remove('mobile-controls--dimmed');
+      this.setLayerClass('mobile-controls--dimmed', false);
       this.playerController?.activateTouch?.();
     } else {
-      this.root.classList.add('mobile-controls--dimmed');
+      this.setLayerClass('mobile-controls--dimmed', true);
       this.resetInput();
       this.playerController?.deactivateTouch?.();
     }
@@ -345,6 +358,8 @@ export class MobileControls {
       this.playerController?.toggleFlyMode?.();
     } else if (action === 'graphics') {
       this.graphicsPanel?.toggle?.();
+    } else if (action === 'god') {
+      this.godPanel?.toggle?.();
     }
   }
 

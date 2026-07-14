@@ -11,7 +11,6 @@ import { MeshBuilder } from './mesh-builder.js';
 import { FluidMeshBuilder } from './fluid-mesh-builder.js';
 import { GasMeshBuilder } from './gas-mesh-builder.js';
 import { GrassFoliageBuilder } from './grass-foliage-builder.js';
-import { BlockLightSystem } from '../systems/block-lights.js';
 
 export class AquariumWorld {
   constructor(scene, { quality = {} } = {}) {
@@ -22,19 +21,14 @@ export class AquariumWorld {
     this.gasField = new GasField();
     this.meshBuilder = new MeshBuilder(this.grid, {
       lambertTerrain: !!quality.lambertTerrain,
-      flatColors: !!quality.flatColorsTerrain,
-      unlitTerrain: !!quality.unlitTerrain,
     });
     this.fluidMeshBuilder = new FluidMeshBuilder(this.grid, this.fluidField, {
       enabled: quality.fluidMeshEnabled !== false,
     });
-    this.gasMeshBuilder = new GasMeshBuilder(this.grid, this.gasField, {
-      simpleRender: !!quality.simpleSmokeRender,
-    });
+    this.gasMeshBuilder = new GasMeshBuilder(this.grid, this.gasField);
     this.grassFoliageBuilder = new GrassFoliageBuilder(this.grid, {
       enabled: quality.foliageEnabled !== false,
     });
-    this.blockLights = new BlockLightSystem(scene);
     this.tank = null;
     this.blockSupport = null;
     this.treeGrowth = null;
@@ -52,7 +46,6 @@ export class AquariumWorld {
       if (this.grassFoliageBuilder.enabled) {
         this.grassFoliageBuilder.markDirtyAt(x, y, z);
       }
-      this.blockLights.syncAt(this.grid, x, y, z);
     };
 
     this.fluidField.onChange = (x, y, z) => {
@@ -84,7 +77,6 @@ export class AquariumWorld {
   }
 
   generate(seed = DEFAULT_WORLD_SEED) {
-    this.blockLights.clear();
     this.grid.cells.clear();
     this.fluidField.clear();
     this.gasField.clear();
@@ -100,9 +92,7 @@ export class AquariumWorld {
   }
 
   createTank() {
-    this.tank = createAquariumTank(this.scene, this.grid.size, {
-      simpleGlass: !!this.quality.simpleGlass,
-    });
+    this.tank = createAquariumTank(this.scene, this.grid.size);
   }
 
   setBlockSupport(system) {
@@ -462,7 +452,6 @@ export class AquariumWorld {
   }
 
   dispose() {
-    this.blockLights.dispose();
     this.meshBuilder.dispose();
     this.fluidMeshBuilder.dispose();
     this.gasMeshBuilder.dispose();

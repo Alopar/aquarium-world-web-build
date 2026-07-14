@@ -155,7 +155,7 @@ export const MATERIALS = {
     emissive: 0x44aaff,
     drops: [{ itemId: 'crystal', min: 1, max: 3 }],
   },
-  /** Светящийся фонарь — освещает окрестности PointLight. */
+  /** Светящийся фонарь — только emissive, без динамического света. */
   lumen: {
     id: 'lumen',
     name: 'Люмен',
@@ -166,12 +166,6 @@ export const MATERIALS = {
     opacity: 0.9,
     emissive: 0xffc14d,
     emissiveIntensity: 1.6,
-    light: {
-      color: 0xffd078,
-      intensity: 2.2,
-      distance: 16,
-      decay: 2,
-    },
   },
   water: {
     id: 'water',

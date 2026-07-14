@@ -37,6 +37,9 @@
         </div>
       </div>
       <p class="loader-status">Загрузка...</p>
+      <div class="loader-progress" aria-hidden="true">
+        <div class="loader-progress__bar"></div>
+      </div>
       <div class="menu-ornament menu-ornament--bottom" aria-hidden="true">✦</div>
     </div>
   </div>
@@ -81,7 +84,7 @@
     </div>
     <div id="hotbar"></div>
     <p id="hud-place-mode" class="hud-place-mode">ПКМ: ставить блок</p>
-    <p id="hud-hint">ЛКМ — сломать · ПКМ — поставить/бросить · Q — режим · E — инвентарь · C — крафт · G — графика · WASD — полёт · Space — вверх · Ctrl — вниз · P — профайлер</p>
+    <p id="hud-hint">ЛКМ — сломать · ПКМ — поставить/бросить · Q — режим · E — инвентарь · C — крафт · G — графика · F3 — панель бога · WASD — полёт · Space — вверх · Ctrl — вниз · P — профайлер</p>
     <button type="button" id="btn-graphics" class="hud-graphics-btn" title="Графика (G)" aria-label="Настройки графики">GFX</button>
     <div id="profiler" class="profiler profiler--mini"></div>
   </div>
@@ -89,14 +92,17 @@
   <div id="inventory-panel" class="hidden" aria-hidden="true"></div>
   <div id="crafting-panel" class="hidden" aria-hidden="true"></div>
   <div id="graphics-panel" class="hidden" aria-hidden="true"></div>
+  <div id="god-panel" class="hidden" aria-hidden="true"></div>
 
-  <div id="mobile-controls" class="mobile-controls hidden" aria-hidden="true">
+  <div id="mobile-touch-zones" class="mobile-touch-zones hidden" aria-hidden="true">
     <div class="mobile-move-pad" id="mobile-move-pad" aria-hidden="true"></div>
     <div class="mobile-look-pad" id="mobile-look-pad" aria-label="Обзор"></div>
     <div class="mobile-stick mobile-stick--visual" id="mobile-move-stick" aria-hidden="true">
       <div class="mobile-stick__ring"></div>
       <div class="mobile-stick__knob" id="mobile-move-knob"></div>
     </div>
+  </div>
+  <div id="mobile-controls" class="mobile-controls hidden" aria-hidden="true">
     <div class="mobile-action-select" id="mobile-action-select" role="group" aria-label="Действия">
       <button type="button" class="mobile-action-btn mobile-action-btn--dig" data-action="dig" aria-pressed="false" aria-label="Сломать">Лом</button>
       <button type="button" class="mobile-action-btn mobile-action-btn--jump" data-action="jump" aria-pressed="false" aria-label="Прыжок">Прыг</button>
@@ -107,6 +113,7 @@
       <button type="button" class="mobile-tool" data-action="craft">Крафт</button>
       <button type="button" class="mobile-tool" data-action="mode">Режим</button>
       <button type="button" class="mobile-tool" data-action="graphics">GFX</button>
+      <button type="button" class="mobile-tool mobile-tool--god" data-action="god" aria-label="Панель бога">Бог</button>
       <button type="button" class="mobile-tool" data-action="fly">Полёт</button>
     </div>
   </div>

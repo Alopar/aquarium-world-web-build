@@ -85,6 +85,9 @@ export class WeatherSystem {
     this.rainEnabled = rainEnabled;
 
     this.isRaining = false;
+    this.cycleEnabled = true;
+    /** null = автоцикл, true/false = принудительно */
+    this.forcedRain = null;
     /** Первый дождь через ~25 с, дальше полный цикл dry/rain. */
     this.timer = Math.min(25, WEATHER.dryDuration);
     this.intensity = 0;
@@ -135,11 +138,20 @@ export class WeatherSystem {
       return;
     }
 
-    this.timer -= dt;
-    if (this.timer <= 0) {
-      this.isRaining = !this.isRaining;
-      this.timer = this.isRaining ? WEATHER.rainDuration : WEATHER.dryDuration;
-      this.syncEvaporation();
+    if (this.cycleEnabled && this.forcedRain === null) {
+      this.timer -= dt;
+      if (this.timer <= 0) {
+        this.isRaining = !this.isRaining;
+        this.timer = this.isRaining ? WEATHER.rainDuration : WEATHER.dryDuration;
+        this.syncEvaporation();
+      }
+    }
+
+    if (this.forcedRain !== null) {
+      if (this.isRaining !== this.forcedRain) {
+        this.isRaining = this.forcedRain;
+        this.syncEvaporation();
+      }
     }
 
     this.targetIntensity = this.isRaining ? 1 : 0;
@@ -172,6 +184,21 @@ export class WeatherSystem {
 
     this.applyAtmosphere(dayNight);
     this.sound?.setRainLevel?.(this.intensity * this.exposedFactor);
+  }
+
+  /** @param {boolean} enabled */
+  setCycleEnabled(enabled) {
+    this.cycleEnabled = enabled;
+    if (enabled) this.forcedRain = null;
+  }
+
+  /** @param {boolean|null} raining null снимает принудительный режим */
+  setForcedRain(raining) {
+    this.forcedRain = raining;
+    if (raining !== null) {
+      this.isRaining = raining;
+      this.syncEvaporation();
+    }
   }
 
   syncEvaporation() {

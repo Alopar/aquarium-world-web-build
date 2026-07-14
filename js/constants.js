@@ -203,19 +203,6 @@ export const CHUNK_SIZE = 16;
 /** Сколько грязных чанков пересобирать за один кадр */
 export const MAX_CHUNKS_REBUILD_PER_FRAME = 2;
 
-/** Постепенное склеивание чанков: span³ чанков → один greedy-mesh. */
-export const MESH_MERGE = {
-  span: 2,
-  stableFrames: 45,
-  maxPerFrame: 1,
-};
-
-/** Flat vertex colors: шахматное осветление/затемнение по (x+y+z). */
-export const FLAT_CHECKER = {
-  lightMul: 1.07,
-  darkMul: 0.93,
-};
-
 export const PARTICLES = {
   blockBreak: {
     count: 16,

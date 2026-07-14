@@ -1,5 +1,4 @@
 import { FLUID, GAS } from './constants.js';
-import { setAquariumTankGlassMode } from './world/glass-tank.js';
 import { applyUserFog, clampFogViewDistance } from './systems/fog-controller.js';
 import { applyAquariumDecorEnabled } from './systems/aquarium-decor.js';
 import { applyPixelScale, clampPixelScale } from './systems/pixel-scale.js';
@@ -51,29 +50,8 @@ export function applyGraphicsSettings(app, patch) {
     app.gasSystem.maxTicksPerFrame = next.gasTicksPerFrame;
   }
 
-  if (next.simpleGlass !== prev.simpleGlass && world?.tank) {
-    setAquariumTankGlassMode(world.tank, next.simpleGlass);
-  }
-
   if (next.lambertTerrain !== prev.lambertTerrain && world?.meshBuilder) {
     world.meshBuilder.setLambertTerrain(next.lambertTerrain);
-  }
-
-  if (next.flatColorsTerrain !== prev.flatColorsTerrain && world?.meshBuilder) {
-    world.meshBuilder.setFlatColors(next.flatColorsTerrain);
-  }
-
-  if (next.unlitTerrain !== prev.unlitTerrain && world?.meshBuilder) {
-    world.meshBuilder.setUnlitTerrain(!!next.unlitTerrain);
-    app.meshMerge?.refreshMaterials(world.meshBuilder);
-  }
-
-  if (next.blockLightsEnabled !== prev.blockLightsEnabled && world?.blockLights) {
-    const on = next.blockLightsEnabled !== false;
-    world.blockLights.setEnabled(on);
-    if (on && world.grid) {
-      world.blockLights.resyncFromGrid(world.grid);
-    }
   }
 
   if (next.pixelScale !== prev.pixelScale && app.renderer) {
@@ -88,26 +66,8 @@ export function applyGraphicsSettings(app, patch) {
     world.fluidMeshBuilder.setEnabled(next.fluidMeshEnabled, world.scene);
   }
 
-  if (next.simpleSmokeRender !== prev.simpleSmokeRender && world?.gasMeshBuilder) {
-    world.gasMeshBuilder.setSimpleRender(next.simpleSmokeRender);
-  }
-
-  if (next.chunkMeshMerge !== prev.chunkMeshMerge && app.meshMerge) {
-    app.meshMerge.setEnabled(next.chunkMeshMerge !== false, world?.meshBuilder);
-  }
-
   if (
-    (next.flatColorsTerrain !== prev.flatColorsTerrain
-      || next.lambertTerrain !== prev.lambertTerrain)
-    && app.meshMerge
-  ) {
-    app.meshMerge.splitAll(world?.meshBuilder);
-  }
-
-  if (
-    (next.chunkFrustumCull !== prev.chunkFrustumCull
-      || next.chunkOcclusionCull !== prev.chunkOcclusionCull
-      || next.fogEnabled !== prev.fogEnabled
+    (next.fogEnabled !== prev.fogEnabled
       || next.fogViewDistance !== prev.fogViewDistance)
     && app.chunkVisibility
     && app.camera

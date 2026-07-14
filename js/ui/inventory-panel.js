@@ -248,10 +248,12 @@ export class InventoryPanel {
     const hint = document.getElementById('hud-hint');
     const placeMode = document.getElementById('hud-place-mode');
     const mobile = document.getElementById('mobile-controls');
+    const touchZones = document.getElementById('mobile-touch-zones');
     hotbar?.classList.toggle('hidden', !visible);
     hint?.classList.toggle('hidden', !visible);
     placeMode?.classList.toggle('hidden', !visible);
     mobile?.classList.toggle('mobile-controls--ui-hidden', !visible);
+    touchZones?.classList.toggle('mobile-controls--ui-hidden', !visible);
   }
 
   openPanel() {

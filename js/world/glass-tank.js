@@ -7,50 +7,30 @@ export function getTankBounds(size = AQUARIUM_SIZE, voxelSize = VOXEL_SIZE) {
   return { minX: 0, maxX: sx, minZ: 0, maxZ: sz, minY: 0 };
 }
 
-function createTankMaterials(simpleGlass) {
-  const wallMaterial = simpleGlass
-    ? new THREE.MeshBasicMaterial({
-      color: 0x88ccff,
-      transparent: true,
-      opacity: 0.22,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    })
-    : new THREE.MeshPhysicalMaterial({
-      color: 0x88ccff,
-      transparent: true,
-      opacity: 0.22,
-      roughness: 0.04,
-      metalness: 0.05,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
+function createTankMaterials() {
+  const wallMaterial = new THREE.MeshBasicMaterial({
+    color: 0x88ccff,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
 
-  const floorMaterial = simpleGlass
-    ? new THREE.MeshBasicMaterial({
-      color: 0x1a3050,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-    })
-    : new THREE.MeshStandardMaterial({
-      color: 0x1a3050,
-      roughness: 0.9,
-      metalness: 0.05,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-    });
+  const floorMaterial = new THREE.MeshBasicMaterial({
+    color: 0x1a3050,
+    transparent: true,
+    opacity: 0.85,
+    depthWrite: false,
+  });
 
   return { wallMaterial, floorMaterial };
 }
 
-export function createAquariumTank(scene, size = AQUARIUM_SIZE, { simpleGlass = false } = {}) {
+export function createAquariumTank(scene, size = AQUARIUM_SIZE) {
   const group = new THREE.Group();
   group.name = 'aquarium-tank';
 
-  const { wallMaterial, floorMaterial } = createTankMaterials(simpleGlass);
-  group.userData.simpleGlass = simpleGlass;
+  const { wallMaterial, floorMaterial } = createTankMaterials();
   group.userData.wallMaterial = wallMaterial;
   group.userData.floorMaterial = floorMaterial;
 
@@ -86,24 +66,4 @@ export function createAquariumTank(scene, size = AQUARIUM_SIZE, { simpleGlass = 
 
   scene.add(group);
   return group;
-}
-
-export function setAquariumTankGlassMode(group, simpleGlass) {
-  if (!group || group.userData.simpleGlass === simpleGlass) return;
-
-  const oldWall = group.userData.wallMaterial;
-  const oldFloor = group.userData.floorMaterial;
-  const { wallMaterial, floorMaterial } = createTankMaterials(simpleGlass);
-
-  group.traverse((obj) => {
-    if (!obj.isMesh) return;
-    if (obj.material === oldWall) obj.material = wallMaterial;
-    else if (obj.material === oldFloor) obj.material = floorMaterial;
-  });
-
-  oldWall?.dispose();
-  oldFloor?.dispose();
-  group.userData.simpleGlass = simpleGlass;
-  group.userData.wallMaterial = wallMaterial;
-  group.userData.floorMaterial = floorMaterial;
 }
