@@ -1,7 +1,7 @@
 /** Canvas pixel ratio multiplier for A/B (on top of device + lowQuality cap). */
 export const PIXEL_SCALE = {
   min: 0.25,
-  max: 1,
+  max: 2,
   default: 1,
   step: 0.05,
 };

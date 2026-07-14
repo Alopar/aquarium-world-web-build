@@ -15,6 +15,7 @@ export const DESKTOP_QUALITY = {
   fluidMeshEnabled: true,
   fogEnabled: false,
   fogViewDistance: FOG_VIEW.default,
+  shadowsEnabled: true,
   pixelScale: 1,
 };
 
@@ -29,6 +30,7 @@ export const MOBILE_QUALITY = {
   fluidMeshEnabled: false,
   fogEnabled: false,
   fogViewDistance: 45,
+  shadowsEnabled: false,
   pixelScale: 1,
 };
 
@@ -64,6 +66,11 @@ export const GRAPHICS_OPTIONS = [
     hint: 'Проще Standard PBR (только текстуры)',
   },
   {
+    key: 'shadowsEnabled',
+    label: 'Тени солнца',
+    hint: 'DirectionalLight shadow map; выкл — ярче ambient',
+  },
+  {
     key: 'foliageEnabled',
     label: 'Трава и цветы',
     hint: 'Instancing + шейдер',
@@ -94,7 +101,7 @@ export const GRAPHICS_SLIDERS = [
   {
     key: 'pixelScale',
     label: 'Pixel scale (A/B)',
-    hint: 'Меньше — меньше пикселей, выше FPS',
+    hint: '0.25× — меньше пикселей; до 2× — выше чёткость, ниже FPS',
     min: PIXEL_SCALE.min,
     max: PIXEL_SCALE.max,
     step: PIXEL_SCALE.step,

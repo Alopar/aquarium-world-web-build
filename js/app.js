@@ -14,6 +14,7 @@ import {
   createLights,
   createRenderer,
   createScene,
+  applyShadowsEnabled,
 } from './systems/renderer.js';
 import { PlayerController } from './systems/player-controller.js';
 import { PlayerHealth } from './systems/player-health.js';
@@ -163,8 +164,10 @@ export class App {
       this.renderer = createRenderer(this.canvas, { lowQuality });
       this.scene = createScene();
       this.camera = createCamera();
-      const lights = createLights(this.scene, { shadows: !lowQuality });
+      const shadowsOn = this.quality.shadowsEnabled !== false;
+      const lights = createLights(this.scene, { shadows: shadowsOn });
       this.dayNight = new DayNightSystem(this.scene, lights);
+      applyShadowsEnabled(this.renderer, lights, this.dayNight, shadowsOn);
     });
 
     await step(0.15, 'Загрузка текстур...', () => loadBlockTextures());

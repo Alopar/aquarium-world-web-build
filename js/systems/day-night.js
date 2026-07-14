@@ -29,6 +29,9 @@ const _waterFog = new THREE.Color();
 const _waterSky = new THREE.Color();
 const _sunDir = new THREE.Vector3();
 
+/** Match renderer createLights ambient ratio when shadows are off. */
+const AMBIENT_NO_SHADOWS_MUL = 0.72 / 0.55;
+
 function smoothstep(edge0, edge1, x) {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
@@ -116,6 +119,7 @@ export class DayNightSystem {
     this.scene = scene;
     this.lights = lights;
     this.shadowsEnabled = lights.shadowsEnabled !== false;
+    this.userShadowsEnabled = this.shadowsEnabled;
     // Start in the morning so the first minutes are bright
     this.elapsed = DAY_NIGHT.cycleSeconds * 0.12;
     this.cycleEnabled = true;
@@ -123,6 +127,11 @@ export class DayNightSystem {
     this.underwaterFactor = 0;
     this.phase = 0;
     this.dayAmount = 1;
+  }
+
+  /** @param {boolean} enabled */
+  setUserShadowsEnabled(enabled) {
+    this.userShadowsEnabled = enabled;
   }
 
   /** @param {boolean} enabled */
@@ -241,10 +250,13 @@ export class DayNightSystem {
     }
 
     this.lights.ambient.color.copy(_ambient);
+    if (!this.userShadowsEnabled) {
+      ambientIntensity *= AMBIENT_NO_SHADOWS_MUL;
+    }
     this.lights.ambient.intensity = ambientIntensity;
     this.lights.sun.color.copy(_sun);
     this.lights.sun.intensity = Math.max(0, sunIntensity);
-    this.lights.sun.castShadow = this.shadowsEnabled
+    this.lights.sun.castShadow = this.userShadowsEnabled
       && sunAltitude > 0.05
       && u < 0.85
       && w < 0.5;

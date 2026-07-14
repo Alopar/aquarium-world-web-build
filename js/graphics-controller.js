@@ -2,6 +2,7 @@ import { FLUID, GAS } from './constants.js';
 import { applyUserFog, clampFogViewDistance } from './systems/fog-controller.js';
 import { applyAquariumDecorEnabled } from './systems/aquarium-decor.js';
 import { applyPixelScale, clampPixelScale } from './systems/pixel-scale.js';
+import { applyShadowsEnabled } from './systems/renderer.js';
 import {
   DESKTOP_QUALITY,
   MOBILE_QUALITY,
@@ -52,6 +53,15 @@ export function applyGraphicsSettings(app, patch) {
 
   if (next.lambertTerrain !== prev.lambertTerrain && world?.meshBuilder) {
     world.meshBuilder.setLambertTerrain(next.lambertTerrain);
+  }
+
+  if (next.shadowsEnabled !== prev.shadowsEnabled && app.renderer && app.dayNight) {
+    applyShadowsEnabled(
+      app.renderer,
+      app.dayNight.lights,
+      app.dayNight,
+      next.shadowsEnabled !== false,
+    );
   }
 
   if (next.pixelScale !== prev.pixelScale && app.renderer) {
