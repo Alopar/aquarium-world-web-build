@@ -1,10 +1,21 @@
 import * as THREE from 'three';
-import { HOTBAR_SLOTS, RAYCAST_MAX_DISTANCE, VOXEL_SIZE } from '../constants.js';
-import { hasDrops, isBreakable, isCollectible, isPlaceable, isResourceBlock, isSolid } from '../materials/registry.js';
+import { HOTBAR_SLOTS, LIGHTING, RAYCAST_MAX_DISTANCE, VOXEL_SIZE } from '../constants.js';
+import {
+  getLightColor,
+  getLightLevel,
+  hasDrops,
+  isBreakable,
+  isCollectible,
+  isPlaceable,
+  isResourceBlock,
+  isSolid,
+} from '../materials/registry.js';
 import { isExplosive, isItem } from '../items/registry.js';
 import { getFluid } from '../fluids/registry.js';
 import { getGas } from '../gases/registry.js';
 import { blockIntersectsPlayerAabb } from '../physics/voxel-collision.js';
+
+const HELD_LIGHT_ID = 'held';
 
 export function voxelRaycast(origin, direction, grid, maxDistance = RAYCAST_MAX_DISTANCE) {
   const ox = origin.x / VOXEL_SIZE;
@@ -236,6 +247,34 @@ export class BlockInteraction {
   }
 
   /**
+   * Hold a glowing block in the hotbar → transient voxel light at the camera.
+   */
+  updateHeldLight() {
+    const lighting = this.world?.lighting;
+    if (!lighting) return;
+
+    const materialId = this.getSelectedMaterial();
+    const level = materialId ? getLightLevel(materialId) : 0;
+    if (level <= 0 || isItem(materialId)) {
+      lighting.removeDynamicLight(HELD_LIGHT_ID);
+      return;
+    }
+
+    const origin = this.camera.position;
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    const offset = LIGHTING.heldLightForward ?? 0.35;
+    lighting.upsertDynamicLight(
+      HELD_LIGHT_ID,
+      origin.x + dir.x * offset,
+      origin.y + dir.y * offset,
+      origin.z + dir.z * offset,
+      level,
+      getLightColor(materialId),
+    );
+  }
+
+  /**
    * Seed a hotbar slot (0-based). Used for starting fluids / tools.
    */
   setSlot(index, materialId, count) {
@@ -330,6 +369,7 @@ export class BlockInteraction {
   }
 
   dispose() {
+    this.world?.lighting?.removeDynamicLight(HELD_LIGHT_ID);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
     window.removeEventListener('keydown', this.onKeyDown);
     this.highlight?.parent?.remove(this.highlight);

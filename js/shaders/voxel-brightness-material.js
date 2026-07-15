@@ -6,18 +6,40 @@ const _whiteTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1,
 _whiteTex.needsUpdate = true;
 _whiteTex.colorSpace = THREE.SRGBColorSpace;
 
-/** Shared uniforms — day/night scales skylight only. */
+const _emptyDynTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
+_emptyDynTex.format = THREE.RGBAFormat;
+_emptyDynTex.type = THREE.UnsignedByteType;
+_emptyDynTex.minFilter = THREE.NearestFilter;
+_emptyDynTex.magFilter = THREE.NearestFilter;
+_emptyDynTex.needsUpdate = true;
+
+/** Shared uniforms — day/night scales skylight only; dynamic from atlas tex. */
 export const brightnessUniforms = {
   uDaySkyLight: { value: 1 },
   uMinBrightness: { value: LIGHTING.minBrightness },
   uBrightTime: { value: 0 },
   uBrightLerp: { value: LIGHTING.brightnessLerpSeconds },
+  uDynamicLight: { value: _emptyDynTex },
+  uWorldSize: { value: new THREE.Vector3(1, 1, 1) },
+  uUseDynamicLight: { value: 0 },
 };
 
 export function setBrightnessUniforms(dayAmount) {
   brightnessUniforms.uDaySkyLight.value = Math.max(0, dayAmount);
   brightnessUniforms.uMinBrightness.value = LIGHTING.minBrightness;
   brightnessUniforms.uBrightLerp.value = LIGHTING.brightnessLerpSeconds;
+}
+
+/** Bind the world's dynamic light 3D texture to all brightness materials. */
+export function bindDynamicLightTexture(lighting) {
+  if (!lighting?.dynamicTexture) {
+    brightnessUniforms.uDynamicLight.value = _emptyDynTex;
+    brightnessUniforms.uUseDynamicLight.value = 0;
+    return;
+  }
+  brightnessUniforms.uDynamicLight.value = lighting.dynamicTexture;
+  brightnessUniforms.uWorldSize.value.set(lighting.sizeX, lighting.sizeY, lighting.sizeZ);
+  brightnessUniforms.uUseDynamicLight.value = 1;
 }
 
 /** Advance shared clock for brightness blend shaders. */
@@ -35,6 +57,30 @@ export const BRIGHTNESS_GLSL = /* glsl */ `
   }
 `;
 
+/** Sample transient dynamicLight field from Y-sliced 2D atlas. */
+export const DYNAMIC_LIGHT_GLSL = /* glsl */ `
+  uniform sampler2D uDynamicLight;
+  uniform vec3 uWorldSize;
+  uniform float uUseDynamicLight;
+
+  vec3 sampleDynamicLight(vec3 worldPos) {
+    if (uUseDynamicLight < 0.5) return vec3(0.0);
+    float x = floor(worldPos.x);
+    float y = floor(worldPos.y);
+    float z = floor(worldPos.z);
+    if (x < 0.0 || y < 0.0 || z < 0.0) return vec3(0.0);
+    if (x >= uWorldSize.x || y >= uWorldSize.y || z >= uWorldSize.z) return vec3(0.0);
+    float texW = uWorldSize.x * uWorldSize.z;
+    float u = (x + z * uWorldSize.x + 0.5) / texW;
+    float v = (y + 0.5) / uWorldSize.y;
+    return texture2D(uDynamicLight, vec2(u, v)).rgb;
+  }
+
+  vec3 combineBlockLight(vec3 staticBlock, vec3 worldPos) {
+    return max(staticBlock, sampleDynamicLight(worldPos));
+  }
+`;
+
 /** Mix prev→target sky + RGB using per-vertex blend start + shared clock. */
 export const BRIGHTNESS_BLEND_GLSL = /* glsl */ `
   void blendFaceLight(
@@ -49,6 +95,18 @@ export const BRIGHTNESS_BLEND_GLSL = /* glsl */ `
   }
 `;
 
+function sharedLightUniforms() {
+  return {
+    uDaySkyLight: brightnessUniforms.uDaySkyLight,
+    uMinBrightness: brightnessUniforms.uMinBrightness,
+    uBrightTime: brightnessUniforms.uBrightTime,
+    uBrightLerp: brightnessUniforms.uBrightLerp,
+    uDynamicLight: brightnessUniforms.uDynamicLight,
+    uWorldSize: brightnessUniforms.uWorldSize,
+    uUseDynamicLight: brightnessUniforms.uUseDynamicLight,
+  };
+}
+
 const VOXEL_VERTEX = /* glsl */ `
   attribute vec3 color;
   attribute float aSky;
@@ -60,16 +118,19 @@ const VOXEL_VERTEX = /* glsl */ `
   varying vec2 vUv;
   varying float vSky;
   varying vec3 vBlock;
+  varying vec3 vWorldPos;
 
   ${BRIGHTNESS_BLEND_GLSL}
 
   void main() {
     vUv = uv;
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPos = worldPos.xyz;
     blendFaceLight(
       aSky, color, aPrevSky, aPrevBlock, aBlendStart,
       uBrightTime, uBrightLerp, vSky, vBlock
     );
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
 
@@ -87,14 +148,17 @@ const VOXEL_FRAGMENT = /* glsl */ `
   varying vec2 vUv;
   varying float vSky;
   varying vec3 vBlock;
+  varying vec3 vWorldPos;
 
   ${BRIGHTNESS_GLSL}
+  ${DYNAMIC_LIGHT_GLSL}
 
   void main() {
     vec4 tex = uUseMap > 0.5 ? texture2D(uMap, vUv) : vec4(1.0);
     if (uAlphaTest > 0.0 && tex.a < uAlphaTest) discard;
 
-    vec3 light = mcLightColor(vSky, vBlock, uDaySkyLight, uMinBrightness);
+    vec3 block = combineBlockLight(vBlock, vWorldPos);
+    vec3 light = mcLightColor(vSky, block, uDaySkyLight, uMinBrightness);
     vec3 albedo = tex.rgb * uColor;
     vec3 lit = albedo * light;
 
@@ -126,10 +190,7 @@ export function createVoxelBrightnessMaterial(materialDef) {
       uAlphaTest: { value: 0 },
       uEmissive: { value: new THREE.Color(materialDef.emissive ?? 0x000000) },
       uEmissiveMul: { value: emissiveMul },
-      uDaySkyLight: brightnessUniforms.uDaySkyLight,
-      uMinBrightness: brightnessUniforms.uMinBrightness,
-      uBrightTime: brightnessUniforms.uBrightTime,
-      uBrightLerp: brightnessUniforms.uBrightLerp,
+      ...sharedLightUniforms(),
     },
     vertexShader: VOXEL_VERTEX,
     fragmentShader: VOXEL_FRAGMENT,
@@ -155,21 +216,21 @@ export function createUniformBrightnessMaterial(opts = {}) {
       uAlphaTest: { value: 0 },
       uEmissive: { value: new THREE.Color(0x000000) },
       uEmissiveMul: { value: 0 },
-      uDaySkyLight: brightnessUniforms.uDaySkyLight,
-      uMinBrightness: brightnessUniforms.uMinBrightness,
-      uBrightTime: brightnessUniforms.uBrightTime,
-      uBrightLerp: brightnessUniforms.uBrightLerp,
+      ...sharedLightUniforms(),
     },
     vertexShader: /* glsl */ `
       attribute vec3 color;
       varying vec2 vUv;
       varying float vSky;
       varying vec3 vBlock;
+      varying vec3 vWorldPos;
       void main() {
         vUv = uv;
         vSky = color.r;
         vBlock = vec3(color.g);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldPos = worldPos.xyz;
+        gl_Position = projectionMatrix * viewMatrix * worldPos;
       }
     `,
     fragmentShader: VOXEL_FRAGMENT,

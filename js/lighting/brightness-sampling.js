@@ -63,22 +63,19 @@ export function applyMeshVoxelBrightness(mesh, lighting, worldX, worldY, worldZ)
 }
 
 /**
- * Sample skylight + blocklight RGB at a voxel (neighbor max for block).
- * @param {import('./voxel-lighting.js').VoxelLightingSystem | null} lighting
- * @param {number} x
- * @param {number} y
- * @param {number} z
+ * Sample skylight + combined blocklight (static∨dynamic) for entities.
  */
 export function sampleVoxelBrightness(lighting, x, y, z) {
   if (!lighting) return emptyLight();
 
   const max = LIGHTING.maxLevel;
   const sky = lighting.getSkylight(x, y, z) / max;
-  let rgb = lighting.getBlockLightRgb(x, y, z);
+  const getRgb = lighting.getBlockLightRgb.bind(lighting);
+  let rgb = getRgb(x, y, z);
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dz = -1; dz <= 1; dz++) {
-        rgb = maxRgb(rgb, lighting.getBlockLightRgb(x + dx, y + dy, z + dz));
+        rgb = maxRgb(rgb, getRgb(x + dx, y + dy, z + dz));
       }
     }
   }
@@ -92,8 +89,36 @@ export function sampleVoxelBrightness(lighting, x, y, z) {
 }
 
 /**
- * Face brightness: sky + block RGB from the outward cell (MC-style).
- * Self block light is used only for emitters.
+ * Static-only voxel sample for mesh attribute bake (dynamic comes from shader atlas).
+ */
+export function sampleVoxelStaticBrightness(lighting, x, y, z) {
+  if (!lighting) return emptyLight();
+
+  const max = LIGHTING.maxLevel;
+  const getRgb = lighting.getStaticBlockLightRgb?.bind(lighting)
+    ?? lighting.getBlockLightRgb.bind(lighting);
+  const sky = lighting.getSkylight(x, y, z) / max;
+  let rgb = getRgb(x, y, z);
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        rgb = maxRgb(rgb, getRgb(x + dx, y + dy, z + dz));
+      }
+    }
+  }
+  return {
+    sky,
+    block: Math.max(rgb.r, rgb.g, rgb.b) / max,
+    blockR: rgb.r / max,
+    blockG: rgb.g / max,
+    blockB: rgb.b / max,
+  };
+}
+
+/**
+ * Face brightness: sky + **static** block RGB from the outward cell (MC-style).
+ * Dynamic light is applied in the fragment shader via 3D texture.
+ * Self static block light is used only for emitters.
  */
 export function sampleFaceBrightness(lighting, x, y, z, dir) {
   if (!lighting) return emptyLight();
@@ -102,12 +127,16 @@ export function sampleFaceBrightness(lighting, x, y, z, dir) {
   const ox = x + dir[0];
   const oy = y + dir[1];
   const oz = z + dir[2];
-  const outwardSky = lighting.getSkylight(ox, oy, oz) / max;
-  let rgb = lighting.getBlockLightRgb(ox, oy, oz);
+  const getRgb = lighting.getStaticBlockLightRgb?.bind(lighting)
+    ?? lighting.getBlockLightRgb.bind(lighting);
+  const getSky = lighting.getSkylight.bind(lighting);
+
+  const outwardSky = getSky(ox, oy, oz) / max;
+  let rgb = getRgb(ox, oy, oz);
 
   const selfId = lighting.grid?.get?.(x, y, z);
   if (selfId && getLightLevel(selfId) > 0) {
-    rgb = maxRgb(rgb, lighting.getBlockLightRgb(x, y, z));
+    rgb = maxRgb(rgb, getRgb(x, y, z));
   }
 
   return {
@@ -141,12 +170,26 @@ export function sampleFaceBrightnessBlend(lighting, blend, x, y, z, dir) {
 }
 
 /**
- * Voxel brightness with prev→target (fluid top helpers).
+ * Face brightness snapped (no blend) — for dynamic light mesh patches.
+ */
+export function sampleFaceBrightnessSnap(lighting, x, y, z, dir) {
+  return withBlendPassthrough(sampleFaceBrightness(lighting, x, y, z, dir));
+}
+
+/**
+ * Voxel brightness snapped (no blend) — for dynamic light mesh patches.
+ */
+export function sampleVoxelBrightnessSnap(lighting, x, y, z) {
+  return withBlendPassthrough(sampleVoxelStaticBrightness(lighting, x, y, z));
+}
+
+/**
+ * Voxel brightness with prev→target (fluid top helpers) — static bake only.
  */
 export function sampleVoxelBrightnessBlend(lighting, blend, x, y, z) {
-  const target = sampleVoxelBrightness(lighting, x, y, z);
+  const target = sampleVoxelStaticBrightness(lighting, x, y, z);
   if (!blend || !lighting) return withBlendPassthrough(target);
-  const prev = sampleVoxelBrightness(blend.prevLightingView(), x, y, z);
+  const prev = sampleVoxelStaticBrightness(blend.prevLightingView(), x, y, z);
   let blendStart = -1e6;
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {

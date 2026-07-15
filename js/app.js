@@ -340,9 +340,11 @@ export class App {
     this.playerController?.update(dt);
     this.mobileControls?.tick(dt);
     this.playerHealth?.update(dt);
+    this.blockInteraction?.updateHeldLight?.();
     this.projectileSystem?.update(dt);
     this.lootSystem?.update(dt);
     this.bombSystem?.update(dt);
+    this.world?.lighting?.tickDynamicLights(dt);
     this.spaceSky?.update(this.camera);
     this.dayNight?.update(dt, this.playerController, this.spaceSky, this.world?.fluidField, this.world);
     this.weather?.update(dt, this.playerController, this.dayNight);

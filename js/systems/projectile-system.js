@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { PROJECTILE, VOXEL_SIZE } from '../constants.js';
 import {
+  getLightColor,
+  getLightLevel,
   getMaterial,
   isPlaceable,
   isResourceBlock,
@@ -97,6 +99,7 @@ export class ProjectileSystem {
 
     this.projectiles.push(projectile);
     this.group.add(projectile.mesh);
+    this._syncProjectileLight(projectile);
     return true;
   }
 
@@ -178,10 +181,17 @@ export class ProjectileSystem {
   }
 
   update(dt) {
+    const lighting = this.world.lighting;
+
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const projectile = this.projectiles[i];
-      const result = projectile.update(this.world.grid, dt, this.world.lighting);
-      if (!result) continue;
+      const result = projectile.update(this.world.grid, dt, lighting);
+      if (!result) {
+        this._syncProjectileLight(projectile);
+        continue;
+      }
+
+      lighting.removeDynamicLight(projectile.lightId);
 
       const placed = this.placeProjectile(projectile.materialId, result.cell);
       if (!placed) {
@@ -194,8 +204,22 @@ export class ProjectileSystem {
     }
   }
 
+  _syncProjectileLight(projectile) {
+    const level = getLightLevel(projectile.materialId);
+    if (level <= 0) return;
+    this.world.lighting.upsertDynamicLight(
+      projectile.lightId,
+      projectile.position.x,
+      projectile.position.y,
+      projectile.position.z,
+      level,
+      getLightColor(projectile.materialId),
+    );
+  }
+
   dispose() {
     for (const projectile of this.projectiles) {
+      this.world.lighting.removeDynamicLight(projectile.lightId);
       this.group.remove(projectile.mesh);
       projectile.dispose();
     }

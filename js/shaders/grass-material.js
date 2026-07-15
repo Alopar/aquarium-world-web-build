@@ -4,6 +4,7 @@ import {
   brightnessUniforms,
   BRIGHTNESS_GLSL,
   BRIGHTNESS_BLEND_GLSL,
+  DYNAMIC_LIGHT_GLSL,
 } from './voxel-brightness-material.js';
 
 export const grassTimeUniform = { value: 0 };
@@ -18,6 +19,7 @@ const FOLIAGE_VERTEX = /* glsl */ `
   varying float vSky;
   varying vec3 vBlock;
   varying vec3 vTint;
+  varying vec3 vWorldPos;
 
   uniform float uTime;
   uniform float uBrightTime;
@@ -39,6 +41,7 @@ const FOLIAGE_VERTEX = /* glsl */ `
     float tip = clamp(transformed.y / max(uBladeHeight, 0.001), 0.0, 1.0);
     tip *= tip;
     vec3 instOrigin = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    vWorldPos = instOrigin + transformed;
     float phase = instOrigin.x * 0.7 + instOrigin.z * 0.55;
     float wind = sin(uTime * 1.8 + phase) * uWindStrength * tip;
     transformed.x += wind;
@@ -58,14 +61,17 @@ const FOLIAGE_FRAGMENT = /* glsl */ `
   varying float vSky;
   varying vec3 vBlock;
   varying vec3 vTint;
+  varying vec3 vWorldPos;
 
   ${BRIGHTNESS_GLSL}
+  ${DYNAMIC_LIGHT_GLSL}
 
   void main() {
     vec4 tex = texture2D(uMap, vUv);
     if (tex.a < uAlphaTest) discard;
 
-    vec3 light = mcLightColor(vSky, vBlock, uDaySkyLight, uMinBrightness);
+    vec3 block = combineBlockLight(vBlock, vWorldPos);
+    vec3 light = mcLightColor(vSky, block, uDaySkyLight, uMinBrightness);
     vec3 albedo = tex.rgb * vTint;
     gl_FragColor = vec4(albedo * light, 1.0);
   }
@@ -87,6 +93,9 @@ export function createFoliageMaterial(textureId, windStrength = 0.05, bladeHeigh
       uMinBrightness: brightnessUniforms.uMinBrightness,
       uBrightTime: brightnessUniforms.uBrightTime,
       uBrightLerp: brightnessUniforms.uBrightLerp,
+      uDynamicLight: brightnessUniforms.uDynamicLight,
+      uWorldSize: brightnessUniforms.uWorldSize,
+      uUseDynamicLight: brightnessUniforms.uUseDynamicLight,
     },
     vertexShader: FOLIAGE_VERTEX,
     fragmentShader: FOLIAGE_FRAGMENT,

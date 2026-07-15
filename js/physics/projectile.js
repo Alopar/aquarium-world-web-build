@@ -4,6 +4,8 @@ import { getMaterial, isSolid } from '../materials/registry.js';
 import { createVoxelBrightnessMaterial, setGeometryFullBright } from '../shaders/voxel-brightness-material.js';
 import { applyMeshVoxelBrightness } from '../lighting/brightness-sampling.js';
 
+let _projectileLightSeq = 0;
+
 function worldToBlock(x, y, z) {
   return {
     x: Math.floor(x / VOXEL_SIZE),
@@ -20,6 +22,7 @@ export class Projectile {
     this.age = 0;
     this.alive = true;
     this.lastAirCell = null;
+    this.lightId = `proj-${++_projectileLightSeq}`;
 
     const materialDef = getMaterial(materialId);
     const geometry = new THREE.BoxGeometry(VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92);

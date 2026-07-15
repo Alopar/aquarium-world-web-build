@@ -52,7 +52,9 @@ export class BlockDebugPanel {
       lightLevel: row('emit', ''),
       sky: row('skylight', ''),
       block: row('blocklight', ''),
+      dynamic: row('dynamic', ''),
       blockRgb: row('block rgb', ''),
+      dynRgb: row('dyn rgb', ''),
       bright: row('bright', ''),
       volume: row('volume', ''),
     };
@@ -86,13 +88,17 @@ export class BlockDebugPanel {
 
     const mat = getMaterial(id);
     const sky = world.lighting?.getSkylight(x, y, z) ?? 0;
-    const block = world.lighting?.getBlockLight(x, y, z) ?? 0;
-    const rgb = world.lighting?.getBlockLightRgb?.(x, y, z) ?? { r: 0, g: 0, b: 0 };
+    const block = world.lighting?.getStaticBlockLight?.(x, y, z)
+      ?? world.lighting?.getBlockLight(x, y, z) ?? 0;
+    const dyn = world.lighting?.getDynamicLight?.(x, y, z) ?? 0;
+    const rgb = world.lighting?.getStaticBlockLightRgb?.(x, y, z)
+      ?? world.lighting?.getBlockLightRgb?.(x, y, z) ?? { r: 0, g: 0, b: 0 };
+    const dynRgb = world.lighting?.getDynamicLightRgb?.(x, y, z) ?? { r: 0, g: 0, b: 0 };
     const emit = getLightLevel(id);
     const skyLv = (sky / LIGHTING.maxLevel) * dayAmount;
-    const blockR = rgb.r / LIGHTING.maxLevel;
-    const blockG = rgb.g / LIGHTING.maxLevel;
-    const blockB = rgb.b / LIGHTING.maxLevel;
+    const blockR = Math.max(rgb.r, dynRgb.r) / LIGHTING.maxLevel;
+    const blockG = Math.max(rgb.g, dynRgb.g) / LIGHTING.maxLevel;
+    const blockB = Math.max(rgb.b, dynRgb.b) / LIGHTING.maxLevel;
     const level = Math.max(skyLv, blockR, blockG, blockB);
     const bright = LIGHTING.minBrightness + (1 - LIGHTING.minBrightness) * level;
 
@@ -100,7 +106,7 @@ export class BlockDebugPanel {
     if (mat.liquid) volume = String(world.getFluidVolume(x, y, z));
     else if (mat.gas) volume = String(world.getGasVolume(x, y, z));
 
-    const key = `${x},${y},${z},${id},${sky},${rgb.r},${rgb.g},${rgb.b},${volume},${dayAmount.toFixed(2)}`;
+    const key = `${x},${y},${z},${id},${sky},${rgb.r},${rgb.g},${rgb.b},${dyn},${dynRgb.r},${dynRgb.g},${dynRgb.b},${volume},${dayAmount.toFixed(2)}`;
     if (key === this._lastKey) return;
     this._lastKey = key;
 
@@ -118,7 +124,9 @@ export class BlockDebugPanel {
     this.rows.lightLevel.valueEl.textContent = String(emit);
     this.rows.sky.valueEl.textContent = `${sky}/${LIGHTING.maxLevel}`;
     this.rows.block.valueEl.textContent = `${block}/${LIGHTING.maxLevel}`;
+    this.rows.dynamic.valueEl.textContent = `${dyn}/${LIGHTING.maxLevel}`;
     this.rows.blockRgb.valueEl.textContent = `${rgb.r} ${rgb.g} ${rgb.b}`;
+    this.rows.dynRgb.valueEl.textContent = `${dynRgb.r} ${dynRgb.g} ${dynRgb.b}`;
     this.rows.bright.valueEl.textContent = bright.toFixed(3);
 
     this.rows.volume.el.classList.toggle('hidden', volume === '');

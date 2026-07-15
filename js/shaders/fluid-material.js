@@ -3,6 +3,7 @@ import {
   brightnessUniforms,
   BRIGHTNESS_GLSL,
   BRIGHTNESS_BLEND_GLSL,
+  DYNAMIC_LIGHT_GLSL,
 } from './voxel-brightness-material.js';
 
 /** Shared clock for all fluid shader materials. */
@@ -57,6 +58,7 @@ const WATER_FRAGMENT = /* glsl */ `
   varying vec3 vBlock;
 
   ${BRIGHTNESS_GLSL}
+  ${DYNAMIC_LIGHT_GLSL}
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -133,7 +135,7 @@ const WATER_FRAGMENT = /* glsl */ `
     float underside = (gl_FrontFacing ? 0.0 : 1.0) * surfaceMix;
     waterColor = mix(waterColor, mix(uShallowColor, vec3(0.85, 0.95, 1.0), 0.55), underside * 0.75);
 
-    vec3 light = mcLightColor(vSky, vBlock, uDaySkyLight, uMinBrightness);
+    vec3 light = mcLightColor(vSky, combineBlockLight(vBlock, vWorldPos), uDaySkyLight, uMinBrightness);
     vec3 lit = waterColor * light;
     lit += mix(uDeepColor, uShallowColor, 0.55) * fresnel * 0.12 * light;
     lit += uShallowColor * underside * (0.35 + fresnel * 0.4) * light;
@@ -194,6 +196,7 @@ const LAVA_FRAGMENT = /* glsl */ `
   varying vec3 vBlock;
 
   ${BRIGHTNESS_GLSL}
+  ${DYNAMIC_LIGHT_GLSL}
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -219,7 +222,7 @@ const LAVA_FRAGMENT = /* glsl */ `
     float crack = smoothstep(0.35, 0.75, crust);
     float pulse = 0.75 + 0.25 * sin(uTime * 2.2 + glow * 6.28);
 
-    vec3 light = mcLightColor(vSky, vBlock, uDaySkyLight, uMinBrightness);
+    vec3 light = mcLightColor(vSky, combineBlockLight(vBlock, vWorldPos), uDaySkyLight, uMinBrightness);
     vec3 col = mix(uColor * 0.45, uEmissive, crack * pulse);
     col += uEmissive * glow * 0.35 * (0.5 + vSurface * 0.5);
     col *= 0.85 + 0.15 * max(0.0, n.y);
@@ -242,6 +245,9 @@ export function createFluidShaderMaterial(materialDef) {
     uMinBrightness: brightnessUniforms.uMinBrightness,
     uBrightTime: brightnessUniforms.uBrightTime,
     uBrightLerp: brightnessUniforms.uBrightLerp,
+    uDynamicLight: brightnessUniforms.uDynamicLight,
+    uWorldSize: brightnessUniforms.uWorldSize,
+    uUseDynamicLight: brightnessUniforms.uUseDynamicLight,
   };
 
   if (materialDef.emissive != null) {

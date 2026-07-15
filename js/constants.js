@@ -206,6 +206,20 @@ export const LIGHTING = {
   blockLightFalloff: 1,
   /** Linear display lerp when voxel brightness changes (seconds). */
   brightnessLerpSeconds: 0.25,
+  /** Max simultaneous transient emitters (torch, projectile, flash). */
+  maxDynamicLights: 8,
+  /** How many light-only chunks to patch per frame (static edits only). */
+  maxLightChunksPerFrame: 8,
+  heldLightForward: 0.35,
+  /** Seconds between −1 steps on marked dynamic cells. */
+  dynamicDecayInterval: 0.045,
+};
+
+/** Bomb explosion flash (transient voxel light). */
+export const BOMB_FLASH = {
+  level: 14,
+  color: { r: 1, g: 0.45, b: 0.12 },
+  duration: 0.28,
 };
 
 /** Сколько грязных чанков пересобирать за один кадр */

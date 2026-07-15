@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BOMB, PLAYER, VOXEL_SIZE } from '../constants.js';
+import { BOMB, BOMB_FLASH, PLAYER, VOXEL_SIZE } from '../constants.js';
 import { hasDrops, isBreakable, isResourceBlock } from '../materials/registry.js';
 import { ThrownBomb } from '../entities/thrown-bomb.js';
 
@@ -19,6 +19,7 @@ export class BombSystem {
     this.group = new THREE.Group();
     this.group.name = 'bombs';
     scene.add(this.group);
+    this._flashSeq = 0;
 
     this._spawnDir = new THREE.Vector3();
     this._spawnPos = new THREE.Vector3();
@@ -75,6 +76,17 @@ export class BombSystem {
       (cx + 0.5) * VOXEL_SIZE,
       (cy + 0.5) * VOXEL_SIZE,
       (cz + 0.5) * VOXEL_SIZE,
+    );
+
+    const flashId = `bomb-flash-${++this._flashSeq}`;
+    this.world.lighting.pulseDynamicLight(
+      flashId,
+      (cx + 0.5) * VOXEL_SIZE,
+      (cy + 0.5) * VOXEL_SIZE,
+      (cz + 0.5) * VOXEL_SIZE,
+      BOMB_FLASH.level,
+      BOMB_FLASH.color,
+      BOMB_FLASH.duration,
     );
 
     // One lighting pass for the whole blast — not per destroyed block.

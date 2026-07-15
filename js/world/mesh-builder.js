@@ -2,7 +2,10 @@ import * as THREE from 'three';
 import { CHUNK_SIZE, LIGHTING, MAX_CHUNKS_REBUILD_PER_FRAME, VOXEL_SIZE } from '../constants.js';
 import { getMaterial, isOpaque, listSolidMaterials } from '../materials/registry.js';
 import { createVoxelBrightnessMaterial } from '../shaders/voxel-brightness-material.js';
-import { sampleFaceBrightnessBlend } from '../lighting/brightness-sampling.js';
+import {
+  sampleFaceBrightnessBlend,
+  sampleFaceBrightnessSnap,
+} from '../lighting/brightness-sampling.js';
 
 const FACE_DEFS = [
   { dir: [1, 0, 0], normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], uv: (x, y, z, c) => [y + c[1], z + c[2]] },
@@ -28,7 +31,8 @@ function createMeshMaterial(materialDef) {
   return createVoxelBrightnessMaterial(materialDef);
 }
 
-function getFaceLight(lighting, blend, x, y, z, face) {
+function getFaceLight(lighting, blend, x, y, z, face, snap) {
+  if (snap || !blend) return sampleFaceBrightnessSnap(lighting, x, y, z, face.dir);
   return sampleFaceBrightnessBlend(lighting, blend, x, y, z, face.dir);
 }
 
@@ -44,6 +48,20 @@ function getOrCreateBuffer(buffers, key) {
       prevSkies: [],
       blendStarts: [],
       indices: [],
+    });
+  }
+  return buffers.get(key);
+}
+
+function getOrCreateLightBuffer(buffers, key) {
+  if (!buffers.has(key)) {
+    buffers.set(key, {
+      colors: [],
+      skies: [],
+      prevBlocks: [],
+      prevSkies: [],
+      blendStarts: [],
+      vertexCount: 0,
     });
   }
   return buffers.get(key);
@@ -73,7 +91,7 @@ function buildChunkBuffers(grid, lighting, blend, cx, cy, cz, chunkSize) {
           const nz = z + face.dir[2];
           if (!shouldRenderFace(grid, x, y, z, nx, ny, nz)) continue;
 
-          const faceLight = getFaceLight(lighting, blend, x, y, z, face);
+          const faceLight = getFaceLight(lighting, blend, x, y, z, face, false);
           const base = buf.positions.length / 3;
           for (const corner of face.corners) {
             buf.positions.push(
@@ -99,6 +117,78 @@ function buildChunkBuffers(grid, lighting, blend, cx, cy, cz, chunkSize) {
   }
 
   return buffers;
+}
+
+/** Same face walk as buildChunkBuffers, light attributes only (snapped). */
+function buildChunkLightBuffers(grid, lighting, cx, cy, cz, chunkSize) {
+  const buffers = new Map();
+  const x0 = cx * chunkSize;
+  const y0 = cy * chunkSize;
+  const z0 = cz * chunkSize;
+  const x1 = Math.min(x0 + chunkSize, grid.size.x);
+  const y1 = Math.min(y0 + chunkSize, grid.size.y);
+  const z1 = Math.min(z0 + chunkSize, grid.size.z);
+
+  for (let x = x0; x < x1; x++) {
+    for (let y = y0; y < y1; y++) {
+      for (let z = z0; z < z1; z++) {
+        const id = grid.get(x, y, z);
+        const matDef = getMaterial(id);
+        if (!matDef.solid) continue;
+
+        const buf = getOrCreateLightBuffer(buffers, id);
+
+        for (const face of FACE_DEFS) {
+          const nx = x + face.dir[0];
+          const ny = y + face.dir[1];
+          const nz = z + face.dir[2];
+          if (!shouldRenderFace(grid, x, y, z, nx, ny, nz)) continue;
+
+          const faceLight = sampleFaceBrightnessSnap(lighting, x, y, z, face.dir);
+          for (let i = 0; i < 4; i++) {
+            buf.colors.push(faceLight.blockR, faceLight.blockG, faceLight.blockB);
+            buf.skies.push(faceLight.sky);
+            buf.prevBlocks.push(faceLight.prevBlockR, faceLight.prevBlockG, faceLight.prevBlockB);
+            buf.prevSkies.push(faceLight.prevSky);
+            buf.blendStarts.push(faceLight.blendStart);
+            buf.vertexCount++;
+          }
+        }
+      }
+    }
+  }
+
+  return buffers;
+}
+
+function patchChunkLightAttributes(chunk, buffers) {
+  if (buffers.size !== chunk.meshes.size) return false;
+
+  for (const [key, buf] of buffers) {
+    const mesh = chunk.meshes.get(key);
+    if (!mesh) return false;
+    const geo = mesh.geometry;
+    const color = geo.getAttribute('color');
+    const sky = geo.getAttribute('aSky');
+    const prevBlock = geo.getAttribute('aPrevBlock');
+    const prevSky = geo.getAttribute('aPrevSky');
+    const blendStart = geo.getAttribute('aBlendStart');
+    if (!color || !sky || !prevBlock || !prevSky || !blendStart) return false;
+    if (color.count !== buf.vertexCount) return false;
+
+    color.array.set(buf.colors);
+    sky.array.set(buf.skies);
+    prevBlock.array.set(buf.prevBlocks);
+    prevSky.array.set(buf.prevSkies);
+    blendStart.array.set(buf.blendStarts);
+    color.needsUpdate = true;
+    sky.needsUpdate = true;
+    prevBlock.needsUpdate = true;
+    prevSky.needsUpdate = true;
+    blendStart.needsUpdate = true;
+  }
+
+  return true;
 }
 
 function createMeshFromBuffer(buf, key, threeMaterials, name) {
@@ -164,9 +254,13 @@ export class MeshBuilder {
     this.chunks = new Map();
     this.threeMaterials = new Map();
     this.dirtyChunks = new Set();
+    this.lightDirtyChunks = new Set();
     this.flushScheduled = false;
+    this.lightFlushScheduled = false;
     this.flushFrameId = null;
+    this.lightFlushFrameId = null;
     this.chunksRebuiltLastFrame = 0;
+    this.chunksLightPatchedLastFrame = 0;
     this._statsCache = null;
     this._statsCacheFrame = 0;
     this._statsFrameCounter = 0;
@@ -268,10 +362,62 @@ export class MeshBuilder {
     this.scheduleFlush();
   }
 
+  /** Mark all chunks intersecting a voxel-radius for light-attribute refresh only. */
+  markLightDirtyInRadius(x, y, z, radius = LIGHTING.maxLevel) {
+    const s = this.chunkSize;
+    const cx0 = Math.floor((x - radius) / s);
+    const cx1 = Math.floor((x + radius) / s);
+    const cy0 = Math.floor((y - radius) / s);
+    const cy1 = Math.floor((y + radius) / s);
+    const cz0 = Math.floor((z - radius) / s);
+    const cz1 = Math.floor((z + radius) / s);
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cz = cz0; cz <= cz1; cz++) {
+          this.markChunkLightDirty(cx, cy, cz);
+        }
+      }
+    }
+
+    this.scheduleLightFlush();
+  }
+
+  /** Mark light dirty for a world-space AABB (inclusive voxel coords). */
+  markLightDirtyBox(minX, minY, minZ, maxX, maxY, maxZ) {
+    const s = this.chunkSize;
+    const cx0 = Math.floor(minX / s);
+    const cx1 = Math.floor(maxX / s);
+    const cy0 = Math.floor(minY / s);
+    const cy1 = Math.floor(maxY / s);
+    const cz0 = Math.floor(minZ / s);
+    const cz1 = Math.floor(maxZ / s);
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cz = cz0; cz <= cz1; cz++) {
+          this.markChunkLightDirty(cx, cy, cz);
+        }
+      }
+    }
+
+    this.scheduleLightFlush();
+  }
+
   markChunkDirty(cx, cy, cz) {
     if (cx < 0 || cy < 0 || cz < 0) return;
     if (cx >= this.chunksX || cy >= this.chunksY || cz >= this.chunksZ) return;
-    this.dirtyChunks.add(chunkKey(cx, cy, cz));
+    const key = chunkKey(cx, cy, cz);
+    this.dirtyChunks.add(key);
+    this.lightDirtyChunks.delete(key);
+  }
+
+  markChunkLightDirty(cx, cy, cz) {
+    if (cx < 0 || cy < 0 || cz < 0) return;
+    if (cx >= this.chunksX || cy >= this.chunksY || cz >= this.chunksZ) return;
+    const key = chunkKey(cx, cy, cz);
+    if (this.dirtyChunks.has(key)) return;
+    this.lightDirtyChunks.add(key);
   }
 
   scheduleFlush() {
@@ -280,12 +426,23 @@ export class MeshBuilder {
     this.flushFrameId = requestAnimationFrame(() => this.flush());
   }
 
+  scheduleLightFlush() {
+    if (this.lightFlushScheduled) return;
+    this.lightFlushScheduled = true;
+    this.lightFlushFrameId = requestAnimationFrame(() => this.flushLightOnly());
+  }
+
   cancelScheduledFlush() {
     if (this.flushFrameId != null) {
       cancelAnimationFrame(this.flushFrameId);
       this.flushFrameId = null;
     }
     this.flushScheduled = false;
+    if (this.lightFlushFrameId != null) {
+      cancelAnimationFrame(this.lightFlushFrameId);
+      this.lightFlushFrameId = null;
+    }
+    this.lightFlushScheduled = false;
   }
 
   flush(maxPerFrame = this.maxChunksPerFrame) {
@@ -297,6 +454,7 @@ export class MeshBuilder {
     for (const key of this.dirtyChunks) {
       if (processed >= maxPerFrame) break;
       this.dirtyChunks.delete(key);
+      this.lightDirtyChunks.delete(key);
       const [cx, cy, cz] = key.split(',').map(Number);
       this.rebuildChunk(cx, cy, cz);
       processed++;
@@ -309,6 +467,27 @@ export class MeshBuilder {
 
     if (this.dirtyChunks.size > 0) {
       this.scheduleFlush();
+    }
+  }
+
+  flushLightOnly(maxPerFrame = LIGHTING.maxLightChunksPerFrame) {
+    this.lightFlushScheduled = false;
+    this.lightFlushFrameId = null;
+    this.chunksLightPatchedLastFrame = 0;
+
+    let processed = 0;
+    for (const key of this.lightDirtyChunks) {
+      if (processed >= maxPerFrame) break;
+      this.lightDirtyChunks.delete(key);
+      if (this.dirtyChunks.has(key)) continue;
+      const [cx, cy, cz] = key.split(',').map(Number);
+      this.rebuildChunkLightOnly(cx, cy, cz);
+      processed++;
+      this.chunksLightPatchedLastFrame++;
+    }
+
+    if (this.lightDirtyChunks.size > 0) {
+      this.scheduleLightFlush();
     }
   }
 
@@ -346,9 +525,29 @@ export class MeshBuilder {
     applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz, this.chunkSize);
   }
 
+  rebuildChunkLightOnly(cx, cy, cz) {
+    const key = chunkKey(cx, cy, cz);
+    const chunk = this.chunks.get(key);
+    if (!chunk || !chunk.hasGeometry) return;
+
+    const buffers = buildChunkLightBuffers(
+      this.grid,
+      this.lighting,
+      cx,
+      cy,
+      cz,
+      this.chunkSize,
+    );
+
+    if (!patchChunkLightAttributes(chunk, buffers)) {
+      this.rebuildChunk(cx, cy, cz);
+    }
+  }
+
   rebuildAll() {
     this.cancelScheduledFlush();
     this.dirtyChunks.clear();
+    this.lightDirtyChunks.clear();
     this._statsCache = null;
 
     for (let cx = 0; cx < this.chunksX; cx++) {
@@ -386,7 +585,9 @@ export class MeshBuilder {
       triangles,
       chunkCount: this.chunks.size,
       dirtyChunks: this.dirtyChunks.size,
+      lightDirtyChunks: this.lightDirtyChunks.size,
       chunksRebuiltLastFrame: this.chunksRebuiltLastFrame,
+      chunksLightPatchedLastFrame: this.chunksLightPatchedLastFrame,
       materialCount: this.threeMaterials.size,
     };
   }
@@ -394,7 +595,8 @@ export class MeshBuilder {
   getStats(force = false) {
     this._statsFrameCounter++;
     const stale = this._statsFrameCounter - this._statsCacheFrame >= 30;
-    const needsRefresh = force || !this._statsCache || stale || this.dirtyChunks.size > 0;
+    const needsRefresh = force || !this._statsCache || stale
+      || this.dirtyChunks.size > 0 || this.lightDirtyChunks.size > 0;
 
     if (needsRefresh) {
       this._statsCache = this._computeMeshStats();
@@ -404,13 +606,16 @@ export class MeshBuilder {
     return {
       ...this._statsCache,
       dirtyChunks: this.dirtyChunks.size,
+      lightDirtyChunks: this.lightDirtyChunks.size,
       chunksRebuiltLastFrame: this.chunksRebuiltLastFrame,
+      chunksLightPatchedLastFrame: this.chunksLightPatchedLastFrame,
     };
   }
 
   dispose() {
     this.cancelScheduledFlush();
     this.dirtyChunks.clear();
+    this.lightDirtyChunks.clear();
 
     for (const chunk of this.chunks.values()) {
       for (const mesh of chunk.meshes.values()) {

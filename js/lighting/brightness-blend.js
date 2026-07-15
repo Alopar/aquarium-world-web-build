@@ -37,6 +37,8 @@ export class BrightnessBlendSystem {
       getSkylight: (x, y, z) => this.getPrevSkylight(x, y, z),
       getBlockLight: (x, y, z) => this.getPrevBlockLight(x, y, z),
       getBlockLightRgb: (x, y, z) => this.getPrevBlockLightRgb(x, y, z),
+      getStaticBlockLightRgb: (x, y, z) => this.getPrevBlockLightRgb(x, y, z),
+      getStaticBlockLight: (x, y, z) => this.getPrevBlockLight(x, y, z),
     };
   }
 

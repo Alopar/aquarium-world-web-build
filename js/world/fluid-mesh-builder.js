@@ -456,6 +456,28 @@ export class FluidMeshBuilder {
     this.scheduleFlush();
   }
 
+  /** Light-field change: remesh fluid chunks in box (fluid topology cheap vs solid). */
+  markLightDirtyBox(minX, minY, minZ, maxX, maxY, maxZ) {
+    if (!this.enabled) return;
+    const s = this.chunkSize;
+    const cx0 = Math.floor(minX / s);
+    const cx1 = Math.floor(maxX / s);
+    const cy0 = Math.floor(minY / s);
+    const cy1 = Math.floor(maxY / s);
+    const cz0 = Math.floor(minZ / s);
+    const cz1 = Math.floor(maxZ / s);
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cz = cz0; cz <= cz1; cz++) {
+          this.markChunkDirty(cx, cy, cz);
+        }
+      }
+    }
+
+    this.scheduleFlush();
+  }
+
   markChunkDirty(cx, cy, cz) {
     if (cx < 0 || cy < 0 || cz < 0) return;
     if (cx >= this.chunksX || cy >= this.chunksY || cz >= this.chunksZ) return;

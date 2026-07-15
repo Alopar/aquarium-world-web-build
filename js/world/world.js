@@ -13,6 +13,7 @@ import { GasMeshBuilder } from './gas-mesh-builder.js';
 import { GrassFoliageBuilder } from './grass-foliage-builder.js';
 import { VoxelLightingSystem } from '../lighting/voxel-lighting.js';
 import { BrightnessBlendSystem } from '../lighting/brightness-blend.js';
+import { bindDynamicLightTexture } from '../shaders/voxel-brightness-material.js';
 
 function isSolidMaterial(id) {
   return getMaterial(id).solid === true;
@@ -37,6 +38,7 @@ export class AquariumWorld {
     this.gasField = new GasField();
     this.lighting = new VoxelLightingSystem(this.grid);
     this.brightnessBlend = new BrightnessBlendSystem(this.lighting);
+    bindDynamicLightTexture(this.lighting);
     this.lighting.onAfterFlush = (box) => {
       this.brightnessBlend.captureRegion(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
     };
