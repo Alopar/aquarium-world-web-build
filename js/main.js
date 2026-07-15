@@ -14,6 +14,7 @@ const hudEl = document.getElementById('hud');
 const hotbarEl = document.getElementById('hotbar');
 const placeModeEl = document.getElementById('hud-place-mode');
 const profilerEl = document.getElementById('profiler');
+const blockDebugEl = document.getElementById('block-debug');
 const inventoryEl = document.getElementById('inventory-panel');
 const graphicsPanelEl = document.getElementById('graphics-panel');
 const godPanelEl = document.getElementById('god-panel');
@@ -52,6 +53,7 @@ new App({
   hotbarEl,
   placeModeEl,
   profilerEl,
+  blockDebugEl,
   healthEls,
   dayNightEls,
   inventoryEl,

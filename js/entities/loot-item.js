@@ -2,24 +2,8 @@ import * as THREE from 'three';
 import { LOOT } from '../constants.js';
 import { isSolid } from '../materials/registry.js';
 import { getStackDef } from '../items/stack.js';
-import { getBlockTexture } from '../materials/textures.js';
-
-function createLootMaterial(def) {
-  const texture = def.texture ? getBlockTexture(def.texture) : null;
-  const params = {
-    color: texture ? 0xffffff : (def.color ?? 0xffffff),
-    transparent: def.opacity != null && def.opacity < 1,
-    opacity: def.opacity ?? 1,
-    roughness: 0.85,
-    metalness: 0.05,
-  };
-  if (texture) params.map = texture;
-  if (def.emissive != null) {
-    params.emissive = def.emissive;
-    params.emissiveIntensity = 0.55;
-  }
-  return new THREE.MeshStandardMaterial(params);
-}
+import { createVoxelBrightnessMaterial, setGeometryFullBright } from '../shaders/voxel-brightness-material.js';
+import { applyMeshVoxelBrightness } from '../lighting/brightness-sampling.js';
 
 function cellSolid(grid, x, y, z) {
   if (!grid.inBounds(x, y, z)) return true;
@@ -45,11 +29,12 @@ export class LootItem {
 
     const def = getStackDef(itemId);
     const geometry = new THREE.BoxGeometry(LOOT.size, LOOT.size, LOOT.size);
-    this.mesh = new THREE.Mesh(geometry, createLootMaterial(def));
+    setGeometryFullBright(geometry);
+    this.mesh = new THREE.Mesh(geometry, createVoxelBrightnessMaterial(def));
     this.syncMesh(0);
   }
 
-  syncMesh(dt = 0) {
+  syncMesh(dt = 0, lighting = null) {
     this.bobPhase += dt * LOOT.bobSpeed;
     const bob = this.onGround ? (Math.sin(this.bobPhase) * 0.5 + 0.5) * LOOT.bobAmplitude : 0;
     this.mesh.position.set(this.position.x, this.position.y + bob, this.position.z);
@@ -59,9 +44,10 @@ export class LootItem {
     } else {
       this.mesh.rotation.x *= 0.9;
     }
+    applyMeshVoxelBrightness(this.mesh, lighting, this.position.x, this.position.y, this.position.z);
   }
 
-  update(grid, dt) {
+  update(grid, dt, lighting = null) {
     if (!this.alive) return;
 
     this.age += dt;
@@ -96,7 +82,7 @@ export class LootItem {
       if (Math.abs(this.velocity.z) < 0.02) this.velocity.z = 0;
     }
 
-    this.syncMesh(dt);
+    this.syncMesh(dt, lighting);
   }
 
   moveAxis(grid, axis, delta) {
@@ -105,7 +91,6 @@ export class LootItem {
     const half = LOOT.size * 0.5;
     this.position[axis] += delta;
 
-    // Probe the leading face of the loot AABB (center + half-extent).
     const probe = {
       x: this.position.x + (axis === 'x' ? Math.sign(delta) * half : 0),
       y: this.position.y + (axis === 'y' ? Math.sign(delta) * half : 0),
@@ -117,7 +102,6 @@ export class LootItem {
 
     if (!cellSolid(grid, bx, by, bz)) return;
 
-    // Rest the loot face flush on the solid face (not center-on-surface).
     if (delta > 0) {
       const face = axis === 'x' ? bx : axis === 'y' ? by : bz;
       this.position[axis] = face - half - 1e-4;

@@ -1,23 +1,8 @@
 import * as THREE from 'three';
 import { PROJECTILE, VOXEL_SIZE } from '../constants.js';
 import { getMaterial, isSolid } from '../materials/registry.js';
-import { getBlockTexture } from '../materials/textures.js';
-
-function createProjectileMaterial(materialDef) {
-  const texture = materialDef.texture ? getBlockTexture(materialDef.texture) : null;
-  const params = {
-    color: texture ? 0xffffff : materialDef.color,
-    transparent: materialDef.opacity != null && materialDef.opacity < 1,
-    opacity: materialDef.opacity ?? 1,
-    roughness: 0.92,
-  };
-  if (texture) params.map = texture;
-  if (materialDef.emissive != null) {
-    params.emissive = materialDef.emissive;
-    params.emissiveIntensity = materialDef.emissiveIntensity ?? 0.6;
-  }
-  return new THREE.MeshStandardMaterial(params);
-}
+import { createVoxelBrightnessMaterial, setGeometryFullBright } from '../shaders/voxel-brightness-material.js';
+import { applyMeshVoxelBrightness } from '../lighting/brightness-sampling.js';
 
 function worldToBlock(x, y, z) {
   return {
@@ -38,13 +23,15 @@ export class Projectile {
 
     const materialDef = getMaterial(materialId);
     const geometry = new THREE.BoxGeometry(VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92);
-    const meshMaterial = createProjectileMaterial(materialDef);
+    setGeometryFullBright(geometry);
+    const meshMaterial = createVoxelBrightnessMaterial(materialDef);
     this.mesh = new THREE.Mesh(geometry, meshMaterial);
     this.syncMesh();
   }
 
-  syncMesh() {
+  syncMesh(lighting = null) {
     this.mesh.position.copy(this.position);
+    applyMeshVoxelBrightness(this.mesh, lighting, this.position.x, this.position.y, this.position.z);
   }
 
   sampleCell(grid, bx, by, bz) {
@@ -52,11 +39,10 @@ export class Projectile {
     const id = grid.get(bx, by, bz);
     if (isSolid(id)) return 'solid';
     if (id === 'air') return 'air';
-    // Liquids and other non-solids — pass through, still valid place cells.
     return 'pass';
   }
 
-  update(grid, dt) {
+  update(grid, dt, lighting = null) {
     if (!this.alive) return null;
 
     this.age += dt;
@@ -83,7 +69,6 @@ export class Projectile {
       );
       const sample = this.sampleCell(grid, bx, by, bz);
 
-      // Air and liquid are both passable — remember last cell for placement.
       if (sample === 'air' || sample === 'pass') {
         this.lastAirCell = { x: bx, y: by, z: bz };
       } else if (sample === 'solid' || sample === 'out') {
@@ -92,7 +77,7 @@ export class Projectile {
       }
     }
 
-    this.syncMesh();
+    this.syncMesh(lighting);
 
     if (hit) {
       this.alive = false;

@@ -48,6 +48,18 @@ export class PlayerController {
     /** Touch / mobile virtual controls active (no Pointer Lock). */
     this.touchMode = false;
     this.touchActive = false;
+    /** Browser blocks re-lock for a short time after exit (Esc / unlock). */
+    this._lockCooldownUntil = 0;
+
+    this.controls.addEventListener('unlock', () => {
+      this._beginLockCooldown();
+    });
+
+    // Three.js logs on every pointerlockerror; after Esc that is expected noise.
+    this.domElement.ownerDocument.removeEventListener(
+      'pointerlockerror',
+      this.controls._onPointerlockError,
+    );
 
     this.onKeyDown = (e) => {
       if (e.code === 'KeyF') {
@@ -134,12 +146,25 @@ export class PlayerController {
     return 'ходьба';
   }
 
+  _beginLockCooldown(ms = 650) {
+    this._lockCooldownUntil = performance.now() + ms;
+  }
+
   requestLock() {
     if (this.touchMode) {
       this.touchActive = true;
       return;
     }
-    this.controls.lock();
+    if (this.controls.isLocked) return;
+    if (document.pointerLockElement === this.domElement) return;
+    if (performance.now() < this._lockCooldownUntil) return;
+
+    const promise = this.domElement.requestPointerLock();
+    if (promise?.catch) {
+      promise.catch(() => {
+        this._beginLockCooldown();
+      });
+    }
   }
 
   unlock() {
@@ -147,6 +172,7 @@ export class PlayerController {
       this.deactivateTouch();
       return;
     }
+    this._beginLockCooldown();
     this.controls.unlock();
   }
 

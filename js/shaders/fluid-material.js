@@ -1,37 +1,31 @@
 import * as THREE from 'three';
+import {
+  brightnessUniforms,
+  BRIGHTNESS_GLSL,
+  BRIGHTNESS_BLEND_GLSL,
+} from './voxel-brightness-material.js';
 
 /** Shared clock for all fluid shader materials. */
 export const fluidTimeUniform = { value: 0 };
 
-/** Shared lighting — updated by DayNightSystem so water matches scene lights. */
-export const fluidLightUniforms = {
-  uSunDir: { value: new THREE.Vector3(48, 64, 32).normalize() },
-  uSunColor: { value: new THREE.Color(0xfff4d6) },
-  uAmbientColor: { value: new THREE.Color(0xb8d8ff).multiplyScalar(0.55) },
-};
-
-/**
- * @param {THREE.Vector3} sunDir
- * @param {THREE.Color} sunColor
- * @param {number} sunIntensity
- * @param {THREE.Color} ambientColor
- * @param {number} ambientIntensity
- */
-export function setFluidLightUniforms(sunDir, sunColor, sunIntensity, ambientColor, ambientIntensity) {
-  fluidLightUniforms.uSunDir.value.copy(sunDir);
-  // Day sun intensity is 1.1 on the scene light; water shader historically used unscaled color.
-  const sunScale = sunIntensity / 1.1;
-  fluidLightUniforms.uSunColor.value.copy(sunColor).multiplyScalar(Math.max(0, sunScale));
-  fluidLightUniforms.uAmbientColor.value.copy(ambientColor).multiplyScalar(Math.max(0, ambientIntensity));
-}
-
 const WATER_VERTEX = /* glsl */ `
+  attribute vec3 color;
+  attribute float aSky;
+  attribute vec3 aPrevBlock;
+  attribute float aPrevSky;
+  attribute float aBlendStart;
+  uniform float uBrightTime;
+  uniform float uBrightLerp;
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying vec3 vViewDir;
   varying float vSurface;
+  varying float vSky;
+  varying vec3 vBlock;
 
   attribute float aSurface;
+
+  ${BRIGHTNESS_BLEND_GLSL}
 
   void main() {
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
@@ -39,6 +33,10 @@ const WATER_VERTEX = /* glsl */ `
     vNormalW = normalize(mat3(modelMatrix) * normal);
     vSurface = aSurface;
     vViewDir = cameraPosition - worldPos.xyz;
+    blendFaceLight(
+      aSky, color, aPrevSky, aPrevBlock, aBlendStart,
+      uBrightTime, uBrightLerp, vSky, vBlock
+    );
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
@@ -48,14 +46,17 @@ const WATER_FRAGMENT = /* glsl */ `
   uniform vec3 uDeepColor;
   uniform float uOpacity;
   uniform float uTime;
-  uniform vec3 uSunDir;
-  uniform vec3 uSunColor;
-  uniform vec3 uAmbientColor;
+  uniform float uDaySkyLight;
+  uniform float uMinBrightness;
 
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying vec3 vViewDir;
   varying float vSurface;
+  varying float vSky;
+  varying vec3 vBlock;
+
+  ${BRIGHTNESS_GLSL}
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -92,7 +93,6 @@ const WATER_FRAGMENT = /* glsl */ `
     return (w1 + w2 + w3) * strength;
   }
 
-  // Continuous world-space waves — no per-block vertex displacement.
   vec3 surfaceWaveNormal(vec3 worldPos, float strength) {
     float t = uTime;
     vec2 xz = worldPos.xz;
@@ -117,8 +117,6 @@ const WATER_FRAGMENT = /* glsl */ `
     if (!gl_FrontFacing) geoN = -geoN;
 
     float surfaceMix = vSurface * smoothstep(0.2, 0.75, abs(geoN.y));
-
-    // Surface lighting from continuous world waves; sides keep geometry normal.
     vec3 waveN = surfaceWaveNormal(vWorldPos, 0.16);
     if (!gl_FrontFacing) waveN = -waveN;
     vec3 n = normalize(mix(geoN, waveN, surfaceMix));
@@ -132,22 +130,13 @@ const WATER_FRAGMENT = /* glsl */ `
     float cau = caustics(vWorldPos.xz, uTime);
     waterColor += uShallowColor * cau * (0.1 + surfaceMix * 0.18);
 
-    // Underside of the water surface — brighter meniscus so the free surface reads from below.
     float underside = (gl_FrontFacing ? 0.0 : 1.0) * surfaceMix;
     waterColor = mix(waterColor, mix(uShallowColor, vec3(0.85, 0.95, 1.0), 0.55), underside * 0.75);
 
-    vec3 lightDir = normalize(uSunDir);
-    float wrap = max(0.0, dot(n, lightDir)) * 0.6 + 0.4;
-
-    vec3 halfDir = normalize(lightDir + viewDir);
-    // Soft wide specular — hard sparkles were reading as block edges.
-    float spec = pow(max(0.0, dot(n, halfDir)), mix(24.0, 56.0, surfaceMix));
-
-    vec3 lit = waterColor * (uAmbientColor + uSunColor * wrap * 0.8);
-    lit += uSunColor * spec * (0.22 + surfaceMix * 0.28);
-    lit += mix(uDeepColor, uShallowColor, 0.55) * fresnel * 0.18;
-    lit += uShallowColor * underside * (0.45 + fresnel * 0.55);
-    lit = mix(lit, vec3(0.55, 0.82, 1.0), underside * fresnel * 0.4);
+    vec3 light = mcLightColor(vSky, vBlock, uDaySkyLight, uMinBrightness);
+    vec3 lit = waterColor * light;
+    lit += mix(uDeepColor, uShallowColor, 0.55) * fresnel * 0.12 * light;
+    lit += uShallowColor * underside * (0.35 + fresnel * 0.4) * light;
 
     float alpha = uOpacity;
     alpha = mix(alpha * 0.9, min(0.88, alpha + 0.22), fresnel);
@@ -160,16 +149,32 @@ const WATER_FRAGMENT = /* glsl */ `
 `;
 
 const LAVA_VERTEX = /* glsl */ `
+  attribute vec3 color;
+  attribute float aSky;
+  attribute vec3 aPrevBlock;
+  attribute float aPrevSky;
+  attribute float aBlendStart;
+  uniform float uBrightTime;
+  uniform float uBrightLerp;
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying float vSurface;
+  varying float vSky;
+  varying vec3 vBlock;
+
   attribute float aSurface;
+
+  ${BRIGHTNESS_BLEND_GLSL}
 
   void main() {
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
     vWorldPos = worldPos.xyz;
     vNormalW = normalize(mat3(modelMatrix) * normal);
     vSurface = aSurface;
+    blendFaceLight(
+      aSky, color, aPrevSky, aPrevBlock, aBlendStart,
+      uBrightTime, uBrightLerp, vSky, vBlock
+    );
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
@@ -179,10 +184,16 @@ const LAVA_FRAGMENT = /* glsl */ `
   uniform vec3 uEmissive;
   uniform float uOpacity;
   uniform float uTime;
+  uniform float uDaySkyLight;
+  uniform float uMinBrightness;
 
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying float vSurface;
+  varying float vSky;
+  varying vec3 vBlock;
+
+  ${BRIGHTNESS_GLSL}
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -208,9 +219,11 @@ const LAVA_FRAGMENT = /* glsl */ `
     float crack = smoothstep(0.35, 0.75, crust);
     float pulse = 0.75 + 0.25 * sin(uTime * 2.2 + glow * 6.28);
 
+    vec3 light = mcLightColor(vSky, vBlock, uDaySkyLight, uMinBrightness);
     vec3 col = mix(uColor * 0.45, uEmissive, crack * pulse);
     col += uEmissive * glow * 0.35 * (0.5 + vSurface * 0.5);
     col *= 0.85 + 0.15 * max(0.0, n.y);
+    col = max(col * light, uEmissive * 0.55);
 
     gl_FragColor = vec4(col, uOpacity);
   }
@@ -224,6 +237,13 @@ function colorFromHex(hex) {
  * Build a Three.js material for a liquid definition from the materials registry.
  */
 export function createFluidShaderMaterial(materialDef) {
+  const brightUniforms = {
+    uDaySkyLight: brightnessUniforms.uDaySkyLight,
+    uMinBrightness: brightnessUniforms.uMinBrightness,
+    uBrightTime: brightnessUniforms.uBrightTime,
+    uBrightLerp: brightnessUniforms.uBrightLerp,
+  };
+
   if (materialDef.emissive != null) {
     return new THREE.ShaderMaterial({
       uniforms: {
@@ -231,6 +251,7 @@ export function createFluidShaderMaterial(materialDef) {
         uEmissive: { value: colorFromHex(materialDef.emissive) },
         uOpacity: { value: materialDef.opacity ?? 0.85 },
         uTime: fluidTimeUniform,
+        ...brightUniforms,
       },
       vertexShader: LAVA_VERTEX,
       fragmentShader: LAVA_FRAGMENT,
@@ -251,9 +272,7 @@ export function createFluidShaderMaterial(materialDef) {
       uDeepColor: { value: deep },
       uOpacity: { value: materialDef.opacity ?? 0.5 },
       uTime: fluidTimeUniform,
-      uSunDir: fluidLightUniforms.uSunDir,
-      uSunColor: fluidLightUniforms.uSunColor,
-      uAmbientColor: fluidLightUniforms.uAmbientColor,
+      ...brightUniforms,
     },
     vertexShader: WATER_VERTEX,
     fragmentShader: WATER_FRAGMENT,

@@ -15,7 +15,6 @@ export const DESKTOP_QUALITY = {
   fluidMeshEnabled: true,
   fogEnabled: false,
   fogViewDistance: FOG_VIEW.default,
-  shadowsEnabled: true,
   pixelScale: 1,
 };
 
@@ -30,7 +29,6 @@ export const MOBILE_QUALITY = {
   fluidMeshEnabled: false,
   fogEnabled: false,
   fogViewDistance: 45,
-  shadowsEnabled: false,
   pixelScale: 1,
 };
 
@@ -64,11 +62,6 @@ export const GRAPHICS_OPTIONS = [
     key: 'lambertTerrain',
     label: 'Lambert-материалы мира',
     hint: 'Проще Standard PBR (только текстуры)',
-  },
-  {
-    key: 'shadowsEnabled',
-    label: 'Тени солнца',
-    hint: 'DirectionalLight shadow map; выкл — ярче ambient',
   },
   {
     key: 'foliageEnabled',

@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { VOXEL_SIZE, WEATHER } from '../constants.js';
 import { getMaterial, isSolid } from '../materials/registry.js';
-import { sampleUndergroundFactor } from './day-night.js';
 
 const SIDE = [
   [1, 0],
@@ -163,9 +162,13 @@ export class WeatherSystem {
     }
 
     const cam = player?.camera;
-    const grid = this.world?.grid;
-    if (cam && grid) {
-      this.exposedFactor = 1 - sampleUndergroundFactor(grid, cam.position.x, cam.position.y, cam.position.z);
+    const lighting = this.world?.lighting;
+    if (cam && lighting) {
+      this.exposedFactor = lighting.sampleSkylightFactor(
+        cam.position.x,
+        cam.position.y,
+        cam.position.z,
+      );
     } else {
       this.exposedFactor = 1;
     }
@@ -173,6 +176,8 @@ export class WeatherSystem {
     const visual = this.intensity * this.exposedFactor;
     this.material.opacity = visual * 0.42;
     this.group.visible = visual > 0.02;
+
+    const grid = this.world?.grid;
 
     if (visual > 0.02 && cam && grid) {
       this.updateDrops(dt, cam, grid, visual);
@@ -358,12 +363,6 @@ export class WeatherSystem {
 
     this.scene.fog.near *= lerp(1, WEATHER.fogNearMul, t);
     this.scene.fog.far *= lerp(1, WEATHER.fogFarMul, t);
-
-    if (dayNight?.lights) {
-      const mul = lerp(1, WEATHER.lightMul, t);
-      dayNight.lights.sun.intensity *= mul;
-      dayNight.lights.ambient.intensity *= lerp(1, 0.92, t);
-    }
   }
 
   dispose() {

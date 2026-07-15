@@ -44,7 +44,6 @@ export function createAquariumTank(scene, size = AQUARIUM_SIZE) {
     floorMaterial,
   );
   floor.position.set(sx * 0.5, -0.1, sz * 0.5);
-  floor.receiveShadow = true;
   floor.renderOrder = 1;
   group.add(floor);
 

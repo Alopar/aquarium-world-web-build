@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GameHud } from './ui/hud.js';
 import { Profiler } from './ui/profiler.js';
+import { BlockDebugPanel } from './ui/block-debug-panel.js';
 import { InventoryPanel } from './ui/inventory-panel.js';
 import { CraftingPanel } from './ui/crafting-panel.js';
 import { MobileControls } from './ui/mobile-controls.js';
@@ -11,10 +12,8 @@ import { AquariumWorld } from './world/world.js';
 import {
   bindResize,
   createCamera,
-  createLights,
   createRenderer,
   createScene,
-  applyShadowsEnabled,
 } from './systems/renderer.js';
 import { PlayerController } from './systems/player-controller.js';
 import { PlayerHealth } from './systems/player-health.js';
@@ -40,6 +39,7 @@ import { applyUserFog } from './systems/fog-controller.js';
 import { applyAquariumDecorEnabled } from './systems/aquarium-decor.js';
 import { applyPixelScale } from './systems/pixel-scale.js';
 import { GameLoader } from './ui/loader.js';
+import { tickBrightnessTime } from './shaders/voxel-brightness-material.js';
 
 export class App {
   constructor({
@@ -52,6 +52,7 @@ export class App {
     hotbarEl,
     placeModeEl,
     profilerEl,
+    blockDebugEl = null,
     healthEls,
     dayNightEls,
     inventoryEl,
@@ -73,6 +74,7 @@ export class App {
     this.quality = createQualitySettings(this.isMobile);
     this.hud = new GameHud(hudEl, hotbarEl, placeModeEl, healthEls, dayNightEls);
     this.profiler = new Profiler(profilerEl);
+    this.blockDebug = blockDebugEl ? new BlockDebugPanel(blockDebugEl) : null;
     this.graphicsPanel = graphicsPanelEl ? new GraphicsPanel(graphicsPanelEl, this) : null;
     this.godPanel = godPanelEl ? new GodPanel(godPanelEl, this) : null;
     if (graphicsBtnEl) {
@@ -164,10 +166,7 @@ export class App {
       this.renderer = createRenderer(this.canvas, { lowQuality });
       this.scene = createScene();
       this.camera = createCamera();
-      const shadowsOn = this.quality.shadowsEnabled !== false;
-      const lights = createLights(this.scene, { shadows: shadowsOn });
-      this.dayNight = new DayNightSystem(this.scene, lights);
-      applyShadowsEnabled(this.renderer, lights, this.dayNight, shadowsOn);
+      this.dayNight = new DayNightSystem(this.scene);
     });
 
     await step(0.15, 'Загрузка текстур...', () => loadBlockTextures());
@@ -330,6 +329,8 @@ export class App {
 
     const t0 = performance.now();
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    tickBrightnessTime(dt);
+    this.world?.update(dt);
     this.blockSupport?.update(dt);
     this.treeGrowth?.update(dt);
     this.fluidSystem?.update(dt);
@@ -343,7 +344,7 @@ export class App {
     this.lootSystem?.update(dt);
     this.bombSystem?.update(dt);
     this.spaceSky?.update(this.camera);
-    this.dayNight?.update(dt, this.playerController, this.spaceSky, this.world?.fluidField);
+    this.dayNight?.update(dt, this.playerController, this.spaceSky, this.world?.fluidField, this.world);
     this.weather?.update(dt, this.playerController, this.dayNight);
     applyUserFog(this.scene, this.quality);
     this.hud.updateDayNight(this.dayNight);
@@ -361,6 +362,17 @@ export class App {
       renderer: this.renderer,
       playerController: this.playerController,
     });
+
+    if (this.blockDebug) {
+      const hit = this.state === 'playing' && !this.blockInteraction?.inputBlocked
+        ? this.blockInteraction?.getTarget?.() ?? null
+        : null;
+      this.blockDebug.update({
+        hit,
+        world: this.world,
+        dayAmount: this.dayNight?.skyLightFactor ?? 1,
+      });
+    }
   }
 
   dispose() {
@@ -387,6 +399,7 @@ export class App {
     this.craftingPanel?.dispose();
     this.hud.dispose();
     this.profiler.dispose();
+    this.blockDebug?.dispose();
     this.graphicsPanel?.dispose();
     this.godPanel?.dispose();
     this.renderer?.dispose();

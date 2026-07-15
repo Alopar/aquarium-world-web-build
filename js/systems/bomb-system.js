@@ -46,7 +46,7 @@ export class BombSystem {
 
     for (let i = this.bombs.length - 1; i >= 0; i--) {
       const bomb = this.bombs[i];
-      bomb.update(grid, dt);
+      bomb.update(grid, dt, this.world.lighting);
 
       if (bomb.detonated) {
         this.explode(bomb.position.x, bomb.position.y, bomb.position.z);
@@ -77,27 +77,33 @@ export class BombSystem {
       (cz + 0.5) * VOXEL_SIZE,
     );
 
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dz = -r; dz <= r; dz++) {
-          if (dx * dx + dy * dy + dz * dz > r2) continue;
+    // One lighting pass for the whole blast — not per destroyed block.
+    this.world.beginEditBatch();
+    try {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dz = -r; dz <= r; dz++) {
+            if (dx * dx + dy * dy + dz * dz > r2) continue;
 
-          const x = cx + dx;
-          const y = cy + dy;
-          const z = cz + dz;
-          if (!this.world.grid.inBounds(x, y, z)) continue;
+            const x = cx + dx;
+            const y = cy + dy;
+            const z = cz + dz;
+            if (!this.world.grid.inBounds(x, y, z)) continue;
 
-          const materialId = this.world.getBlock(x, y, z);
-          if (!isBreakable(materialId)) continue;
+            const materialId = this.world.getBlock(x, y, z);
+            if (!isBreakable(materialId)) continue;
 
-          if (this.world.setBlock(x, y, z, 'air')) {
-            this.particleSystem?.spawnBlockBreak(x, y, z, materialId);
-            if (isResourceBlock(materialId) || hasDrops(materialId)) {
-              this.lootSystem?.spawnBurst(materialId, x, y, z);
+            if (this.world.setBlock(x, y, z, 'air')) {
+              this.particleSystem?.spawnBlockBreak(x, y, z, materialId);
+              if (isResourceBlock(materialId) || hasDrops(materialId)) {
+                this.lootSystem?.spawnBurst(materialId, x, y, z);
+              }
             }
           }
         }
       }
+    } finally {
+      this.world.endEditBatch();
     }
 
     this.damagePlayer(worldX, worldY, worldZ);

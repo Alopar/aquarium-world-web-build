@@ -113,7 +113,7 @@ export class LootSystem {
 
     for (let i = this.items.length - 1; i >= 0; i--) {
       const item = this.items[i];
-      item.update(grid, dt);
+      item.update(grid, dt, this.world.lighting);
 
       if (!item.alive) {
         this.removeAt(i);

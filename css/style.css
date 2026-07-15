@@ -1230,21 +1230,73 @@ body.is-mobile .menu-fullscreen {
   }
 }
 
-/* ── Profiler panel ── */
+/* ── Debug panels (profiler + block info) ── */
 
-#profiler {
+.debug-panels {
   position: absolute;
   top: 12px;
   left: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#profiler {
   padding: 8px 12px;
   border-radius: 8px;
   background: rgba(8, 20, 36, 0.82);
   border: 1px solid rgba(120, 180, 255, 0.25);
   font-size: 11px;
   color: rgba(232, 244, 255, 0.8);
-  pointer-events: none;
   max-width: 320px;
   font-variant-numeric: tabular-nums;
+}
+
+.block-debug {
+  min-width: 148px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(8, 20, 36, 0.82);
+  border: 1px solid rgba(120, 180, 255, 0.25);
+  font-size: 11px;
+  color: rgba(232, 244, 255, 0.8);
+  font-variant-numeric: tabular-nums;
+}
+
+.block-debug__title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(120, 200, 255, 0.65);
+  margin-bottom: 6px;
+}
+
+.block-debug__empty {
+  color: rgba(232, 244, 255, 0.4);
+}
+
+.block-debug__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.block-debug__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.block-debug__label {
+  color: rgba(232, 244, 255, 0.45);
+}
+
+.block-debug__value {
+  color: rgba(232, 244, 255, 0.92);
+  text-align: right;
 }
 
 .profiler--mini {
@@ -1355,7 +1407,8 @@ body.is-mobile .menu-fullscreen {
 .hud-graphics-btn {
   position: absolute;
   top: 12px;
-  left: 118px;
+  right: 12px;
+  left: auto;
   z-index: 6;
   padding: 4px 10px;
   font-size: 11px;

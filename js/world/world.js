@@ -1,5 +1,5 @@
-import { AQUARIUM_SIZE, DEFAULT_WORLD_SEED } from '../constants.js';
-import { getMaterial, isOrganic, isSolid, isStructuralSolid } from '../materials/registry.js';
+import { AQUARIUM_SIZE, DEFAULT_WORLD_SEED, LIGHTING } from '../constants.js';
+import { getMaterial, getLightLevel, isOrganic, isSolid, isStructuralSolid } from '../materials/registry.js';
 import { getFluid } from '../fluids/registry.js';
 import { getGas } from '../gases/registry.js';
 import { FluidField } from '../fluids/fluid-field.js';
@@ -11,6 +11,22 @@ import { MeshBuilder } from './mesh-builder.js';
 import { FluidMeshBuilder } from './fluid-mesh-builder.js';
 import { GasMeshBuilder } from './gas-mesh-builder.js';
 import { GrassFoliageBuilder } from './grass-foliage-builder.js';
+import { VoxelLightingSystem } from '../lighting/voxel-lighting.js';
+import { BrightnessBlendSystem } from '../lighting/brightness-blend.js';
+
+function isSolidMaterial(id) {
+  return getMaterial(id).solid === true;
+}
+
+function blocksSkylightMaterial(id) {
+  const mat = getMaterial(id);
+  return mat.solid === true && mat.opaque === true && mat.organic !== true;
+}
+
+function blocksBlockLightMaterial(id) {
+  const mat = getMaterial(id);
+  return mat.solid === true && mat.opaque === true;
+}
 
 export class AquariumWorld {
   constructor(scene, { quality = {} } = {}) {
@@ -19,15 +35,26 @@ export class AquariumWorld {
     this.grid = new VoxelGrid(AQUARIUM_SIZE);
     this.fluidField = new FluidField();
     this.gasField = new GasField();
+    this.lighting = new VoxelLightingSystem(this.grid);
+    this.brightnessBlend = new BrightnessBlendSystem(this.lighting);
+    this.lighting.onAfterFlush = (box) => {
+      this.brightnessBlend.captureRegion(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+    };
     this.meshBuilder = new MeshBuilder(this.grid, {
       lambertTerrain: !!quality.lambertTerrain,
+      lighting: this.lighting,
+      brightnessBlend: this.brightnessBlend,
     });
     this.fluidMeshBuilder = new FluidMeshBuilder(this.grid, this.fluidField, {
       enabled: quality.fluidMeshEnabled !== false,
+      lighting: this.lighting,
+      brightnessBlend: this.brightnessBlend,
     });
     this.gasMeshBuilder = new GasMeshBuilder(this.grid, this.gasField);
     this.grassFoliageBuilder = new GrassFoliageBuilder(this.grid, {
       enabled: quality.foliageEnabled !== false,
+      lighting: this.lighting,
+      brightnessBlend: this.brightnessBlend,
     });
     this.tank = null;
     this.blockSupport = null;
@@ -37,15 +64,50 @@ export class AquariumWorld {
     /** @type {import('../gases/gas-system.js').GasSystem | null} */
     this.gasSystem = null;
 
-    this.grid.onChange = (x, y, z) => {
+    this.grid.onChange = (x, y, z, prev, next) => {
+      const prevId = prev ?? 'air';
+      const nextId = next ?? 'air';
+      const solidEdit = isSolidMaterial(prevId) || isSolidMaterial(nextId);
+
+      // Fluid/gas ↔ air: only fluid/grass meshes — liquids do not affect voxel light.
+      if (!solidEdit) {
+        if (this.fluidMeshBuilder.enabled) {
+          this.fluidMeshBuilder.markDirtyAt(x, y, z);
+        }
+        if (this.grassFoliageBuilder.enabled) {
+          this.grassFoliageBuilder.markDirtyAt(x, y, z);
+        }
+        this.gasMeshBuilder.markDirtyAt(x, y, z);
+        return;
+      }
+
+      const skyDecrease = !blocksSkylightMaterial(prevId) && blocksSkylightMaterial(nextId);
+      const emitChanged = getLightLevel(prevId) !== getLightLevel(nextId);
+      const occlusionChanged = blocksBlockLightMaterial(prevId) !== blocksBlockLightMaterial(nextId);
+      // Skip empty block-light rebuilds when digging in total darkness (no lantern nearby).
+      const blockLightNeeded = emitChanged
+        || (occlusionChanged && this.lighting.hasBlockLightNear(x, y, z, 1));
+
+      this.lighting.markDirtyAt(x, y, z, {
+        skyDecrease,
+        blockLight: blockLightNeeded,
+      });
+
+      this.meshBuilder.markDirtyColumnsAt(x, z);
       this.meshBuilder.markDirtyAt(x, y, z);
+      // Sky flood can reach up to maxLevel sideways — remesh that radius (async).
+      this.meshBuilder.markDirtyInRadius(x, y, z, LIGHTING.maxLevel);
+
       if (this.fluidMeshBuilder.enabled) {
         this.fluidMeshBuilder.markDirtyAt(x, y, z);
+        this.fluidMeshBuilder.markDirtyInRadius(x, y, z, LIGHTING.maxLevel);
       }
-      this.gasMeshBuilder.markDirtyAt(x, y, z);
       if (this.grassFoliageBuilder.enabled) {
         this.grassFoliageBuilder.markDirtyAt(x, y, z);
+        this.grassFoliageBuilder.markDirtyInRadius(x, y, z, LIGHTING.maxLevel);
       }
+
+      this.gasMeshBuilder.markDirtyAt(x, y, z);
     };
 
     this.fluidField.onChange = (x, y, z) => {
@@ -76,6 +138,15 @@ export class AquariumWorld {
     this.gasSystem = system;
   }
 
+  /** Batch solid edits so lighting runs once for the whole group (bombs, etc.). */
+  beginEditBatch() {
+    this.lighting.beginBatch();
+  }
+
+  endEditBatch() {
+    this.lighting.endBatch();
+  }
+
   generate(seed = DEFAULT_WORLD_SEED) {
     this.grid.cells.clear();
     this.fluidField.clear();
@@ -84,6 +155,8 @@ export class AquariumWorld {
     this.grid.onChange = null;
     const treePlans = generateTerrain(this.grid, seed);
     this.grid.onChange = onChange;
+    this.lighting.rebuildAll();
+    this.brightnessBlend.snapAll();
     this.meshBuilder.rebuildAll();
     this.fluidMeshBuilder.rebuildAll();
     this.gasMeshBuilder.rebuildAll();
@@ -101,6 +174,11 @@ export class AquariumWorld {
 
   setTreeGrowth(system) {
     this.treeGrowth = system;
+  }
+
+  /** @param {number} dt */
+  update(dt) {
+    this.brightnessBlend.update(dt);
   }
 
   getFluidVolume(x, y, z) {
@@ -178,7 +256,6 @@ export class AquariumWorld {
           this.fluidSystem?.propagateDisturbance(x, y, z);
         }
       } else {
-        this.fluidMeshBuilder.markDirtyAt(x, y, z);
         this.fluidSystem?.wakeAround(x, y, z);
       }
       return true;

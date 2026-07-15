@@ -6,6 +6,7 @@ import {
   createFluidShaderMaterial,
   updateFluidShaderTime,
 } from '../shaders/fluid-material.js';
+import { sampleFaceBrightnessBlend, sampleVoxelBrightnessBlend } from '../lighting/brightness-sampling.js';
 
 function chunkKey(cx, cy, cz) {
   return `${cx},${cy},${cz}`;
@@ -80,25 +81,92 @@ function shouldRenderFluidFace(grid, fluidField, fluid, x, y, z, dx, dy, dz) {
   return !isOpaque(neighborId);
 }
 
-function pushQuad(buf, verts, normal, surface) {
+function sampleTopLight(lighting, blend, x, y, z) {
+  if (!lighting) {
+    return {
+      sky: 1,
+      block: 0,
+      blockR: 0,
+      blockG: 0,
+      blockB: 0,
+      prevSky: 1,
+      prevBlockR: 0,
+      prevBlockG: 0,
+      prevBlockB: 0,
+      blendStart: -1e6,
+    };
+  }
+  let sky = 0;
+  let blockR = 0;
+  let blockG = 0;
+  let blockB = 0;
+  let prevSky = 0;
+  let prevBlockR = 0;
+  let prevBlockG = 0;
+  let prevBlockB = 0;
+  let blendStart = -1e6;
+  for (const dx of [0, -1]) {
+    for (const dz of [0, -1]) {
+      const sample = sampleVoxelBrightnessBlend(lighting, blend, x + dx, y + 1, z + dz);
+      sky = Math.max(sky, sample.sky);
+      blockR = Math.max(blockR, sample.blockR);
+      blockG = Math.max(blockG, sample.blockG);
+      blockB = Math.max(blockB, sample.blockB);
+      prevSky = Math.max(prevSky, sample.prevSky);
+      prevBlockR = Math.max(prevBlockR, sample.prevBlockR);
+      prevBlockG = Math.max(prevBlockG, sample.prevBlockG);
+      prevBlockB = Math.max(prevBlockB, sample.prevBlockB);
+      if (sample.blendStart > -1e5) {
+        blendStart = blendStart < -1e5
+          ? sample.blendStart
+          : Math.min(blendStart, sample.blendStart);
+      }
+    }
+  }
+  return {
+    sky,
+    block: Math.max(blockR, blockG, blockB),
+    blockR,
+    blockG,
+    blockB,
+    prevSky,
+    prevBlockR,
+    prevBlockG,
+    prevBlockB,
+    blendStart,
+  };
+}
+
+function pushLight(buf, light) {
+  buf.colors.push(light.blockR, light.blockG, light.blockB);
+  buf.skies.push(light.sky);
+  buf.prevBlocks.push(light.prevBlockR, light.prevBlockG, light.prevBlockB);
+  buf.prevSkies.push(light.prevSky);
+  buf.blendStarts.push(light.blendStart);
+}
+
+function pushQuad(buf, verts, normal, surface, light) {
   const base = buf.positions.length / 3;
   for (const [px, py, pz] of verts) {
     buf.positions.push(px, py, pz);
     buf.normals.push(...normal);
     buf.surfaces.push(surface);
+    pushLight(buf, light);
   }
   buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }
 
-function getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, cx, y, cz) {
+function getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, lighting, blend, cx, y, cz) {
   const key = cornerKey(cx, y, cz);
   if (cache.has(key)) return cache.get(key);
 
   const h = cornerHeightAt(grid, fluidField, fluid, cx, y, cz);
+  const light = sampleTopLight(lighting, blend, cx, y, cz);
   const idx = buf.positions.length / 3;
   buf.positions.push(cx * VOXEL_SIZE, y * VOXEL_SIZE + h * VOXEL_SIZE, cz * VOXEL_SIZE);
   buf.normals.push(0, 1, 0);
   buf.surfaces.push(1);
+  pushLight(buf, light);
   cache.set(key, idx);
   return idx;
 }
@@ -106,13 +174,13 @@ function getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, cx, y, cz)
 /**
  * One shared top triangle pair per surface cell — no overlapping per-cell quads.
  */
-function appendFluidSurfaceCell(buf, cache, grid, fluidField, fluid, x, y, z) {
+function appendFluidSurfaceCell(buf, cache, grid, fluidField, fluid, lighting, blend, x, y, z) {
   if (!isTopSurfaceCell(grid, fluidField, fluid, x, y, z)) return;
 
-  const a = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, x, y, z);
-  const b = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, x + 1, y, z);
-  const c = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, x + 1, y, z + 1);
-  const d = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, x, y, z + 1);
+  const a = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, lighting, blend, x, y, z);
+  const b = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, lighting, blend, x + 1, y, z);
+  const c = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, lighting, blend, x + 1, y, z + 1);
+  const d = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, lighting, blend, x, y, z + 1);
 
   // Winding matches +Y faces (seen from above).
   buf.indices.push(d, c, b, d, b, a);
@@ -121,7 +189,7 @@ function appendFluidSurfaceCell(buf, cache, grid, fluidField, fluid, x, y, z) {
 /**
  * Side/bottom walls only — top is built as a unified heightfield per chunk.
  */
-function appendFluidBody(buf, grid, fluidField, fluid, x, y, z) {
+function appendFluidBody(buf, grid, fluidField, fluid, lighting, blend, x, y, z) {
   const x0 = x * VOXEL_SIZE;
   const y0 = y * VOXEL_SIZE;
   const z0 = z * VOXEL_SIZE;
@@ -139,52 +207,62 @@ function appendFluidBody(buf, grid, fluidField, fluid, x, y, z) {
   const y01 = y0 + h01 * VOXEL_SIZE;
 
   if (shouldRenderFluidFace(grid, fluidField, fluid, x, y, z, 0, -1, 0)) {
+    const light = sampleFaceBrightnessBlend(lighting, blend, x, y, z, [0, -1, 0]);
     pushQuad(
       buf,
       [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
       [0, -1, 0],
       0,
+      light,
     );
   }
 
   if (shouldRenderFluidFace(grid, fluidField, fluid, x, y, z, 1, 0, 0)) {
+    const light = sampleFaceBrightnessBlend(lighting, blend, x, y, z, [1, 0, 0]);
     pushQuad(
       buf,
       [[x1, y0, z0], [x1, y10, z0], [x1, y11, z1], [x1, y0, z1]],
       [1, 0, 0],
       0,
+      light,
     );
   }
 
   if (shouldRenderFluidFace(grid, fluidField, fluid, x, y, z, -1, 0, 0)) {
+    const light = sampleFaceBrightnessBlend(lighting, blend, x, y, z, [-1, 0, 0]);
     pushQuad(
       buf,
       [[x0, y0, z1], [x0, y01, z1], [x0, y00, z0], [x0, y0, z0]],
       [-1, 0, 0],
       0,
+      light,
     );
   }
 
   if (shouldRenderFluidFace(grid, fluidField, fluid, x, y, z, 0, 0, 1)) {
+    const light = sampleFaceBrightnessBlend(lighting, blend, x, y, z, [0, 0, 1]);
     pushQuad(
       buf,
       [[x1, y0, z1], [x1, y11, z1], [x0, y01, z1], [x0, y0, z1]],
       [0, 0, 1],
       0,
+      light,
     );
   }
 
   if (shouldRenderFluidFace(grid, fluidField, fluid, x, y, z, 0, 0, -1)) {
+    const light = sampleFaceBrightnessBlend(lighting, blend, x, y, z, [0, 0, -1]);
     pushQuad(
       buf,
       [[x0, y0, z0], [x0, y00, z0], [x1, y10, z0], [x1, y0, z0]],
       [0, 0, -1],
       0,
+      light,
     );
   }
 }
 
-function buildFluidChunkBuffers(grid, fluidField, cx, cy, cz, chunkSize) {
+function buildFluidChunkBuffers(grid, fluidField, lighting, blend, cx, cy, cz, chunkSize) {
   const buffers = new Map();
   const cornerCaches = new Map();
   const x0 = cx * chunkSize;
@@ -205,13 +283,23 @@ function buildFluidChunkBuffers(grid, fluidField, cx, cy, cz, chunkSize) {
         if (volume <= 0) continue;
 
         if (!buffers.has(id)) {
-          buffers.set(id, { positions: [], normals: [], surfaces: [], indices: [] });
+          buffers.set(id, {
+            positions: [],
+            normals: [],
+            surfaces: [],
+            colors: [],
+            skies: [],
+            prevBlocks: [],
+            prevSkies: [],
+            blendStarts: [],
+            indices: [],
+          });
           cornerCaches.set(id, new Map());
         }
 
         const buf = buffers.get(id);
-        appendFluidBody(buf, grid, fluidField, fluid, x, y, z);
-        appendFluidSurfaceCell(buf, cornerCaches.get(id), grid, fluidField, fluid, x, y, z);
+        appendFluidBody(buf, grid, fluidField, fluid, lighting, blend, x, y, z);
+        appendFluidSurfaceCell(buf, cornerCaches.get(id), grid, fluidField, fluid, lighting, blend, x, y, z);
       }
     }
   }
@@ -232,6 +320,11 @@ function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(buf.positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buf.normals, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(buf.colors, 3));
+    geometry.setAttribute('aSky', new THREE.Float32BufferAttribute(buf.skies, 1));
+    geometry.setAttribute('aPrevBlock', new THREE.Float32BufferAttribute(buf.prevBlocks, 3));
+    geometry.setAttribute('aPrevSky', new THREE.Float32BufferAttribute(buf.prevSkies, 1));
+    geometry.setAttribute('aBlendStart', new THREE.Float32BufferAttribute(buf.blendStarts, 1));
     geometry.setAttribute('aSurface', new THREE.Float32BufferAttribute(buf.surfaces, 1));
     geometry.setIndex(buf.indices);
     geometry.computeBoundingSphere();
@@ -249,9 +342,13 @@ export class FluidMeshBuilder {
     chunkSize = CHUNK_SIZE,
     maxChunksPerFrame = MAX_CHUNKS_REBUILD_PER_FRAME,
     enabled = true,
+    lighting = null,
+    brightnessBlend = null,
   } = {}) {
     this.grid = grid;
     this.fluidField = fluidField;
+    this.lighting = lighting;
+    this.brightnessBlend = brightnessBlend;
     this.chunkSize = chunkSize;
     this.maxChunksPerFrame = maxChunksPerFrame;
     this.enabled = enabled;
@@ -338,6 +435,27 @@ export class FluidMeshBuilder {
     this.scheduleFlush();
   }
 
+  markDirtyInRadius(x, y, z, radius = 15) {
+    if (!this.enabled) return;
+    const s = this.chunkSize;
+    const cx0 = Math.floor((x - radius) / s);
+    const cx1 = Math.floor((x + radius) / s);
+    const cy0 = Math.floor((y - radius) / s);
+    const cy1 = Math.floor((y + radius) / s);
+    const cz0 = Math.floor((z - radius) / s);
+    const cz1 = Math.floor((z + radius) / s);
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cz = cz0; cz <= cz1; cz++) {
+          this.markChunkDirty(cx, cy, cz);
+        }
+      }
+    }
+
+    this.scheduleFlush();
+  }
+
   markChunkDirty(cx, cy, cz) {
     if (cx < 0 || cy < 0 || cz < 0) return;
     if (cx >= this.chunksX || cy >= this.chunksY || cz >= this.chunksZ) return;
@@ -394,6 +512,8 @@ export class FluidMeshBuilder {
     const buffers = buildFluidChunkBuffers(
       this.grid,
       this.fluidField,
+      this.lighting,
+      this.brightnessBlend,
       cx,
       cy,
       cz,

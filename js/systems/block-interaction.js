@@ -267,7 +267,7 @@ export class BlockInteraction {
       return;
     }
 
-    const hit = this.placeMode === 'place' ? this.getTarget() : null;
+    const hit = this.getTarget();
 
     if (!this.highlight) {
       const geometry = new THREE.BoxGeometry(VOXEL_SIZE * 1.002, VOXEL_SIZE * 1.002, VOXEL_SIZE * 1.002);

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { BOMB } from '../constants.js';
 import { isSolid } from '../materials/registry.js';
+import { createVoxelBrightnessMaterial, setGeometryFullBright } from '../shaders/voxel-brightness-material.js';
+import { applyMeshVoxelBrightness } from '../lighting/brightness-sampling.js';
 
 function cellSolid(grid, x, y, z) {
   if (!grid.inBounds(x, y, z)) return true;
@@ -21,12 +23,11 @@ export class ThrownBomb {
     this.detonated = false;
 
     const geometry = new THREE.BoxGeometry(BOMB.size, BOMB.size, BOMB.size);
+    setGeometryFullBright(geometry);
     this.mesh = new THREE.Mesh(
       geometry,
-      new THREE.MeshStandardMaterial({
+      createVoxelBrightnessMaterial({
         color: 0x2a1a12,
-        roughness: 0.7,
-        metalness: 0.25,
         emissive: 0xff4400,
         emissiveIntensity: 0.4,
       }),
@@ -34,18 +35,21 @@ export class ThrownBomb {
     this.syncMesh();
   }
 
-  syncMesh(dt = 0) {
+  syncMesh(dt = 0, lighting = null) {
     this.mesh.position.copy(this.position);
     const blink = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(this.age * BOMB.blinkSpeed * Math.PI * 2));
     const urgency = 1 - Math.max(0, this.fuseLeft) / BOMB.fuseTime;
-    this.mesh.material.emissiveIntensity = blink * (0.35 + urgency * 1.4);
+    if (this.mesh.material.uniforms?.uEmissiveMul) {
+      this.mesh.material.uniforms.uEmissiveMul.value = blink * (0.35 + urgency * 1.4);
+    }
     if (dt > 0) {
       this.mesh.rotation.x += dt * BOMB.spinSpeed * 0.55;
       this.mesh.rotation.y += dt * BOMB.spinSpeed;
     }
+    applyMeshVoxelBrightness(this.mesh, lighting, this.position.x, this.position.y, this.position.z);
   }
 
-  update(grid, dt) {
+  update(grid, dt, lighting = null) {
     if (!this.alive) return;
 
     this.age += dt;
@@ -80,7 +84,7 @@ export class ThrownBomb {
       if (Math.abs(this.velocity.z) < 0.02) this.velocity.z = 0;
     }
 
-    this.syncMesh(dt);
+    this.syncMesh(dt, lighting);
   }
 
   moveAxis(grid, axis, delta) {

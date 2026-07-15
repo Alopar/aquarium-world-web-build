@@ -135,6 +135,9 @@ export const DAY_NIGHT = {
     sunIntensity: 1.1,
     fillColor: 0x4aa8ff,
     fillIntensity: 0.35,
+    hemiSkyColor: 0x88bbff,
+    hemiGroundColor: 0x3a5a28,
+    hemiIntensity: 0.25,
   },
   night: {
     sky: 0x01040a,
@@ -147,19 +150,15 @@ export const DAY_NIGHT = {
     sunIntensity: 0.06,
     fillColor: 0x1a2840,
     fillIntensity: 0.03,
+    hemiSkyColor: 0x1a2840,
+    hemiGroundColor: 0x0a1018,
+    hemiIntensity: 0.03,
   },
   twilight: {
     sky: 0xc45a3a,
     fog: 0x6a3a4a,
     ambientColor: 0xffb090,
     sunColor: 0xffc08a,
-  },
-  underground: {
-    lightMul: 0.06,
-    sky: 0x000000,
-    fog: 0x000000,
-    fogNear: 3,
-    fogFar: 18,
   },
   underwater: {
     lightMul: 0.35,
@@ -199,6 +198,15 @@ export const EQUIPMENT_SLOT_LABELS = {
 export const RAYCAST_MAX_DISTANCE = 8;
 
 export const CHUNK_SIZE = 16;
+
+/** Voxel skylight + block-light fields (0…maxLevel). */
+export const LIGHTING = {
+  maxLevel: 15,
+  minBrightness: 0.06,
+  blockLightFalloff: 1,
+  /** Linear display lerp when voxel brightness changes (seconds). */
+  brightnessLerpSeconds: 0.25,
+};
 
 /** Сколько грязных чанков пересобирать за один кадр */
 export const MAX_CHUNKS_REBUILD_PER_FRAME = 2;

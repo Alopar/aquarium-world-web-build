@@ -1,9 +1,8 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, MAX_CHUNKS_REBUILD_PER_FRAME, VOXEL_SIZE } from '../constants.js';
+import { CHUNK_SIZE, LIGHTING, MAX_CHUNKS_REBUILD_PER_FRAME, VOXEL_SIZE } from '../constants.js';
 import { getMaterial, isOpaque, listSolidMaterials } from '../materials/registry.js';
-import {
-  getBlockTexture,
-} from '../materials/textures.js';
+import { createVoxelBrightnessMaterial } from '../shaders/voxel-brightness-material.js';
+import { sampleFaceBrightnessBlend } from '../lighting/brightness-sampling.js';
 
 const FACE_DEFS = [
   { dir: [1, 0, 0], normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], uv: (x, y, z, c) => [y + c[1], z + c[2]] },
@@ -25,25 +24,12 @@ function shouldRenderFace(grid, x, y, z, nx, ny, nz) {
   return !isOpaque(neighborId);
 }
 
-function createMeshMaterial(materialDef, { lambert = false } = {}) {
-  const texture = materialDef.texture ? getBlockTexture(materialDef.texture) : null;
-  const params = {
-    color: texture ? 0xffffff : materialDef.color,
-    transparent: materialDef.opacity != null && materialDef.opacity < 1,
-    opacity: materialDef.opacity ?? 1,
-  };
-  if (texture) {
-    params.map = texture;
-  }
-  if (materialDef.emissive != null) {
-    params.emissive = materialDef.emissive;
-    params.emissiveIntensity = materialDef.emissiveIntensity ?? 0.6;
-  }
-  if (lambert) {
-    return new THREE.MeshLambertMaterial(params);
-  }
-  params.roughness = 0.92;
-  return new THREE.MeshStandardMaterial(params);
+function createMeshMaterial(materialDef) {
+  return createVoxelBrightnessMaterial(materialDef);
+}
+
+function getFaceLight(lighting, blend, x, y, z, face) {
+  return sampleFaceBrightnessBlend(lighting, blend, x, y, z, face.dir);
 }
 
 function getOrCreateBuffer(buffers, key) {
@@ -52,13 +38,18 @@ function getOrCreateBuffer(buffers, key) {
       positions: [],
       normals: [],
       uvs: [],
+      colors: [],
+      skies: [],
+      prevBlocks: [],
+      prevSkies: [],
+      blendStarts: [],
       indices: [],
     });
   }
   return buffers.get(key);
 }
 
-function buildChunkBuffers(grid, cx, cy, cz, chunkSize) {
+function buildChunkBuffers(grid, lighting, blend, cx, cy, cz, chunkSize) {
   const buffers = new Map();
   const x0 = cx * chunkSize;
   const y0 = cy * chunkSize;
@@ -82,6 +73,7 @@ function buildChunkBuffers(grid, cx, cy, cz, chunkSize) {
           const nz = z + face.dir[2];
           if (!shouldRenderFace(grid, x, y, z, nx, ny, nz)) continue;
 
+          const faceLight = getFaceLight(lighting, blend, x, y, z, face);
           const base = buf.positions.length / 3;
           for (const corner of face.corners) {
             buf.positions.push(
@@ -93,6 +85,11 @@ function buildChunkBuffers(grid, cx, cy, cz, chunkSize) {
 
             const [du, dv] = face.uv(x, y, z, corner);
             buf.uvs.push(du, dv);
+            buf.colors.push(faceLight.blockR, faceLight.blockG, faceLight.blockB);
+            buf.skies.push(faceLight.sky);
+            buf.prevBlocks.push(faceLight.prevBlockR, faceLight.prevBlockG, faceLight.prevBlockB);
+            buf.prevSkies.push(faceLight.prevSky);
+            buf.blendStarts.push(faceLight.blendStart);
           }
 
           buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -109,12 +106,15 @@ function createMeshFromBuffer(buf, key, threeMaterials, name) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(buf.positions, 3));
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buf.normals, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uvs, 2));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(buf.colors, 3));
+  geometry.setAttribute('aSky', new THREE.Float32BufferAttribute(buf.skies, 1));
+  geometry.setAttribute('aPrevBlock', new THREE.Float32BufferAttribute(buf.prevBlocks, 3));
+  geometry.setAttribute('aPrevSky', new THREE.Float32BufferAttribute(buf.prevSkies, 1));
+  geometry.setAttribute('aBlendStart', new THREE.Float32BufferAttribute(buf.blendStarts, 1));
   geometry.setIndex(buf.indices);
   geometry.computeBoundingSphere();
 
   const mesh = new THREE.Mesh(geometry, threeMaterials.get(key));
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
   mesh.name = name;
   return mesh;
 }
@@ -150,8 +150,12 @@ export class MeshBuilder {
     chunkSize = CHUNK_SIZE,
     maxChunksPerFrame = MAX_CHUNKS_REBUILD_PER_FRAME,
     lambertTerrain = false,
+    lighting = null,
+    brightnessBlend = null,
   } = {}) {
     this.grid = grid;
+    this.lighting = lighting;
+    this.brightnessBlend = brightnessBlend;
     this.chunkSize = chunkSize;
     this.maxChunksPerFrame = maxChunksPerFrame;
     this.lambertTerrain = lambertTerrain;
@@ -182,18 +186,12 @@ export class MeshBuilder {
     this.threeMaterials.clear();
 
     for (const mat of listSolidMaterials()) {
-      this.threeMaterials.set(mat.id, createMeshMaterial(mat, {
-        lambert: this.lambertTerrain,
-      }));
+      this.threeMaterials.set(mat.id, createMeshMaterial(mat));
     }
   }
 
-  setLambertTerrain(useLambert) {
-    if (this.lambertTerrain === useLambert) return;
-    this.lambertTerrain = useLambert;
-    this._initMaterials();
-    this._clearChunkMeshes();
-    this.rebuildAll();
+  setLambertTerrain(_useLambert) {
+    // MC brightness path ignores PBR/Lambert — no-op for compatibility.
   }
 
   _clearChunkMeshes() {
@@ -226,6 +224,46 @@ export class MeshBuilder {
     if (ly === s - 1) this.markChunkDirty(cx, cy + 1, cz);
     if (lz === 0) this.markChunkDirty(cx, cy, cz - 1);
     if (lz === s - 1) this.markChunkDirty(cx, cy, cz + 1);
+
+    this.scheduleFlush();
+  }
+
+  /** Mark all chunks intersecting a voxel-radius around (x,y,z). */
+  markDirtyInRadius(x, y, z, radius = LIGHTING.maxLevel) {
+    const s = this.chunkSize;
+    const cx0 = Math.floor((x - radius) / s);
+    const cx1 = Math.floor((x + radius) / s);
+    const cy0 = Math.floor((y - radius) / s);
+    const cy1 = Math.floor((y + radius) / s);
+    const cz0 = Math.floor((z - radius) / s);
+    const cz1 = Math.floor((z + radius) / s);
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cz = cz0; cz <= cz1; cz++) {
+          this.markChunkDirty(cx, cy, cz);
+        }
+      }
+    }
+
+    this.scheduleFlush();
+  }
+
+  /** Mark all Y slices in a 3×3 column neighborhood (after skylight column rebuild). */
+  markDirtyColumnsAt(x, z) {
+    const s = this.chunkSize;
+    const cx0 = Math.floor((x - 1) / s);
+    const cx1 = Math.floor((x + 1) / s);
+    const cz0 = Math.floor((z - 1) / s);
+    const cz1 = Math.floor((z + 1) / s);
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cz = cz0; cz <= cz1; cz++) {
+        for (let cy = 0; cy < this.chunksY; cy++) {
+          this.markChunkDirty(cx, cy, cz);
+        }
+      }
+    }
 
     this.scheduleFlush();
   }
@@ -296,7 +334,15 @@ export class MeshBuilder {
 
   rebuildChunk(cx, cy, cz) {
     const chunk = this.getOrCreateChunk(cx, cy, cz);
-    const buffers = buildChunkBuffers(this.grid, cx, cy, cz, this.chunkSize);
+    const buffers = buildChunkBuffers(
+      this.grid,
+      this.lighting,
+      this.brightnessBlend,
+      cx,
+      cy,
+      cz,
+      this.chunkSize,
+    );
     applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz, this.chunkSize);
   }
 

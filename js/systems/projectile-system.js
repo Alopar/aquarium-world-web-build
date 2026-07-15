@@ -180,7 +180,7 @@ export class ProjectileSystem {
   update(dt) {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const projectile = this.projectiles[i];
-      const result = projectile.update(this.world.grid, dt);
+      const result = projectile.update(this.world.grid, dt, this.world.lighting);
       if (!result) continue;
 
       const placed = this.placeProjectile(projectile.materialId, result.cell);

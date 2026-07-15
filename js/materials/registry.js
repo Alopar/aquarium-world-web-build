@@ -25,6 +25,8 @@ export const MATERIALS = {
     color: 0x3a1208,
     texture: 'lava_rock',
     emissive: 0xff4400,
+    lightLevel: 5,
+    lightColor: 0xff4400,
     damagePerSecond: 20,
   },
   dirt: {
@@ -153,9 +155,11 @@ export const MATERIALS = {
     color: 0x6ec8ff,
     texture: 'crystal_ore',
     emissive: 0x44aaff,
+    lightLevel: 8,
+    lightColor: 0x44aaff,
     drops: [{ itemId: 'crystal', min: 1, max: 3 }],
   },
-  /** Светящийся фонарь — только emissive, без динамического света. */
+  /** Светящийся фонарь — emissive + жёлтый blocklight. */
   lumen: {
     id: 'lumen',
     name: 'Люмен',
@@ -166,6 +170,8 @@ export const MATERIALS = {
     opacity: 0.9,
     emissive: 0xffc14d,
     emissiveIntensity: 1.6,
+    lightLevel: 14,
+    lightColor: 0xffc14d,
   },
   water: {
     id: 'water',
@@ -187,6 +193,8 @@ export const MATERIALS = {
     color: 0xff6a1a,
     opacity: 0.85,
     emissive: 0xff4400,
+    lightLevel: 5,
+    lightColor: 0xff4400,
   },
   smoke: {
     id: 'smoke',
@@ -276,6 +284,24 @@ export function rollResourceDrops(materialId) {
     if (count > 0) result.push({ itemId, count });
   }
   return result;
+}
+
+export function getLightLevel(id) {
+  return getMaterial(id).lightLevel ?? 0;
+}
+
+/**
+ * Blocklight tint 0…1. Falls back to emissive, then white.
+ * @returns {{ r: number, g: number, b: number }}
+ */
+export function getLightColor(id) {
+  const mat = getMaterial(id);
+  const hex = mat.lightColor ?? mat.emissive ?? 0xffffff;
+  return {
+    r: ((hex >> 16) & 255) / 255,
+    g: ((hex >> 8) & 255) / 255,
+    b: (hex & 255) / 255,
+  };
 }
 
 export function isOpaque(id) {
