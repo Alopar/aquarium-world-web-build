@@ -5,9 +5,39 @@ import { applyPixelScale, clampPixelScale } from './systems/pixel-scale.js';
 import {
   DESKTOP_QUALITY,
   MOBILE_QUALITY,
+  clampSkyFaceShade,
   saveGraphicsOverrides,
+  syncSkyFaceShadeToLighting,
   tickOptionValue,
 } from './quality-settings.js';
+
+function skyFaceShadeChanged(prev, next) {
+  return next.skyFaceShadeEnabled !== prev.skyFaceShadeEnabled
+    || next.skyFaceShadeTop !== prev.skyFaceShadeTop
+    || next.skyFaceShadeEast !== prev.skyFaceShadeEast
+    || next.skyFaceShadeSouth !== prev.skyFaceShadeSouth
+    || next.skyFaceShadeWest !== prev.skyFaceShadeWest
+    || next.skyFaceShadeNorth !== prev.skyFaceShadeNorth
+    || next.skyFaceShadeBottom !== prev.skyFaceShadeBottom;
+}
+
+/** Refresh baked face brightness after sky-shade tweak. */
+let skyShadeRemeshTimer = 0;
+
+function refreshSkyFaceShadeMeshes(world) {
+  if (!world?.grid) return;
+  if (skyShadeRemeshTimer) clearTimeout(skyShadeRemeshTimer);
+  skyShadeRemeshTimer = setTimeout(() => {
+    skyShadeRemeshTimer = 0;
+    const { x, y, z } = world.grid.size;
+    const maxX = x - 1;
+    const maxY = y - 1;
+    const maxZ = z - 1;
+    world.meshBuilder?.markAllLightDirty?.();
+    world.fluidMeshBuilder?.markLightDirtyBox?.(0, 0, 0, maxX, maxY, maxZ);
+    world.grassFoliageBuilder?.markLightDirtyBox?.(0, 0, 0, maxX, maxY, maxZ);
+  }, 80);
+}
 
 /**
  * Apply runtime graphics toggles (after game started).
@@ -24,6 +54,11 @@ export function applyGraphicsSettings(app, patch) {
   }
   if (patchNorm.pixelScale != null) {
     patchNorm.pixelScale = clampPixelScale(patchNorm.pixelScale);
+  }
+  for (const key of Object.keys(patchNorm)) {
+    if (key.startsWith('skyFaceShade') && key !== 'skyFaceShadeEnabled') {
+      patchNorm[key] = clampSkyFaceShade(patchNorm[key]);
+    }
   }
   const next = { ...prev, ...patchNorm };
   const world = app.world;
@@ -81,6 +116,11 @@ export function applyGraphicsSettings(app, patch) {
     && app.scene
   ) {
     applyUserFog(app.scene, next);
+  }
+
+  if (skyFaceShadeChanged(prev, next)) {
+    syncSkyFaceShadeToLighting(next);
+    refreshSkyFaceShadeMeshes(world);
   }
 
   app.quality = next;

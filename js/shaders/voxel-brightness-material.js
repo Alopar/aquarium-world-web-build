@@ -17,6 +17,7 @@ _emptyDynTex.needsUpdate = true;
 export const brightnessUniforms = {
   uDaySkyLight: { value: 1 },
   uMinBrightness: { value: LIGHTING.minBrightness },
+  uMaxBrightness: { value: LIGHTING.maxBrightness },
   uBrightTime: { value: 0 },
   uBrightLerp: { value: LIGHTING.brightnessLerpSeconds },
   uDynamicLight: { value: _emptyDynTex },
@@ -27,6 +28,7 @@ export const brightnessUniforms = {
 export function setBrightnessUniforms(dayAmount) {
   brightnessUniforms.uDaySkyLight.value = Math.max(0, dayAmount);
   brightnessUniforms.uMinBrightness.value = LIGHTING.minBrightness;
+  brightnessUniforms.uMaxBrightness.value = LIGHTING.maxBrightness;
   brightnessUniforms.uBrightLerp.value = LIGHTING.brightnessLerpSeconds;
 }
 
@@ -47,13 +49,43 @@ export function tickBrightnessTime(dt) {
   brightnessUniforms.uBrightTime.value += dt;
 }
 
-/** Minecraft-style colored light: albedo × max(skyWhite, blockRGB) per channel. */
+/**
+ * Display brightness for normalized light level 0…1.
+ * Log curve keeps relative steps even between minBrightness and maxBrightness.
+ */
+export function mcBrightness(
+  level,
+  minBright = LIGHTING.minBrightness,
+  maxBright = LIGHTING.maxBrightness,
+) {
+  const x = Math.min(1, Math.max(0, level));
+  const lo = Math.max(minBright, 1e-6);
+  const hi = Math.max(maxBright, lo);
+  if (x <= 0) return lo;
+  if (x >= 1) return hi;
+  return Math.exp(Math.log(lo) * (1 - x) + Math.log(hi) * x);
+}
+
+/** Colored light: albedo × curved max(skyWhite, blockRGB). */
 export const BRIGHTNESS_GLSL = /* glsl */ `
-  vec3 mcLightColor(float sky, vec3 blockRgb, float daySky, float minBright) {
+  float mcBrightCurve(float x, float ambient, float peak) {
+    x = clamp(x, 0.0, 1.0);
+    float lo = max(ambient, 1e-6);
+    float hi = max(peak, lo);
+    if (x <= 0.0) return lo;
+    if (x >= 1.0) return hi;
+    return exp(log(lo) * (1.0 - x) + log(hi) * x);
+  }
+
+  vec3 mcLightColor(float sky, vec3 blockRgb, float daySky, float minBright, float maxBright) {
     vec3 skyLit = vec3(clamp(sky * daySky, 0.0, 1.0));
     vec3 blockLit = clamp(blockRgb, 0.0, 1.0);
     vec3 level = max(skyLit, blockLit);
-    return mix(vec3(minBright), vec3(1.0), level);
+    return vec3(
+      mcBrightCurve(level.r, minBright, maxBright),
+      mcBrightCurve(level.g, minBright, maxBright),
+      mcBrightCurve(level.b, minBright, maxBright)
+    );
   }
 `;
 
@@ -63,11 +95,7 @@ export const DYNAMIC_LIGHT_GLSL = /* glsl */ `
   uniform vec3 uWorldSize;
   uniform float uUseDynamicLight;
 
-  vec3 sampleDynamicLight(vec3 worldPos) {
-    if (uUseDynamicLight < 0.5) return vec3(0.0);
-    float x = floor(worldPos.x);
-    float y = floor(worldPos.y);
-    float z = floor(worldPos.z);
+  vec3 sampleDynamicCell(float x, float y, float z) {
     if (x < 0.0 || y < 0.0 || z < 0.0) return vec3(0.0);
     if (x >= uWorldSize.x || y >= uWorldSize.y || z >= uWorldSize.z) return vec3(0.0);
     float texW = uWorldSize.x * uWorldSize.z;
@@ -76,8 +104,23 @@ export const DYNAMIC_LIGHT_GLSL = /* glsl */ `
     return texture2D(uDynamicLight, vec2(u, v)).rgb;
   }
 
-  vec3 combineBlockLight(vec3 staticBlock, vec3 worldPos) {
-    return max(staticBlock, sampleDynamicLight(worldPos));
+  // MC face rule: sample the air/outward cell. Bias + max of a tiny 2-tap
+  // kills boundary floor() flicker on integer face planes.
+  vec3 sampleDynamicLight(vec3 worldPos, vec3 worldNormal) {
+    if (uUseDynamicLight < 0.5) return vec3(0.0);
+    vec3 n = worldNormal;
+    float n2 = dot(n, n);
+    if (n2 > 1e-6) n *= inversesqrt(n2);
+    else n = vec3(0.0, 1.0, 0.0);
+
+    vec3 outward = worldPos + n * 0.08;
+    vec3 c0 = floor(outward);
+    vec3 c1 = floor(worldPos + n * 0.02);
+    return max(sampleDynamicCell(c0.x, c0.y, c0.z), sampleDynamicCell(c1.x, c1.y, c1.z));
+  }
+
+  vec3 combineBlockLight(vec3 staticBlock, vec3 worldPos, vec3 worldNormal) {
+    return max(staticBlock, sampleDynamicLight(worldPos, worldNormal));
   }
 `;
 
@@ -99,6 +142,7 @@ function sharedLightUniforms() {
   return {
     uDaySkyLight: brightnessUniforms.uDaySkyLight,
     uMinBrightness: brightnessUniforms.uMinBrightness,
+    uMaxBrightness: brightnessUniforms.uMaxBrightness,
     uBrightTime: brightnessUniforms.uBrightTime,
     uBrightLerp: brightnessUniforms.uBrightLerp,
     uDynamicLight: brightnessUniforms.uDynamicLight,
@@ -119,6 +163,7 @@ const VOXEL_VERTEX = /* glsl */ `
   varying float vSky;
   varying vec3 vBlock;
   varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
 
   ${BRIGHTNESS_BLEND_GLSL}
 
@@ -126,6 +171,7 @@ const VOXEL_VERTEX = /* glsl */ `
     vUv = uv;
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
     vWorldPos = worldPos.xyz;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
     blendFaceLight(
       aSky, color, aPrevSky, aPrevBlock, aBlendStart,
       uBrightTime, uBrightLerp, vSky, vBlock
@@ -144,11 +190,13 @@ const VOXEL_FRAGMENT = /* glsl */ `
   uniform float uEmissiveMul;
   uniform float uDaySkyLight;
   uniform float uMinBrightness;
+  uniform float uMaxBrightness;
 
   varying vec2 vUv;
   varying float vSky;
   varying vec3 vBlock;
   varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
 
   ${BRIGHTNESS_GLSL}
   ${DYNAMIC_LIGHT_GLSL}
@@ -157,16 +205,20 @@ const VOXEL_FRAGMENT = /* glsl */ `
     vec4 tex = uUseMap > 0.5 ? texture2D(uMap, vUv) : vec4(1.0);
     if (uAlphaTest > 0.0 && tex.a < uAlphaTest) discard;
 
-    vec3 block = combineBlockLight(vBlock, vWorldPos);
-    vec3 light = mcLightColor(vSky, block, uDaySkyLight, uMinBrightness);
+    vec3 block = uEmissiveMul > 0.0
+      ? vec3(0.0)
+      : combineBlockLight(vBlock, vWorldPos, vWorldNormal);
+    vec3 light = mcLightColor(vSky, block, uDaySkyLight, uMinBrightness, uMaxBrightness);
     vec3 albedo = tex.rgb * uColor;
     vec3 lit = albedo * light;
 
+    // Emissive: own glow only — no colored blocklight (self or neighbors).
     if (uEmissiveMul > 0.0) {
-      lit = max(lit, albedo * light + uEmissive * uEmissiveMul);
+      lit += uEmissive * uEmissiveMul;
     }
 
     gl_FragColor = vec4(lit, tex.a * uOpacity);
+    gl_FragColor = linearToOutputTexel(gl_FragColor);
   }
 `;
 
@@ -197,12 +249,13 @@ export function createVoxelBrightnessMaterial(materialDef) {
     transparent,
     depthWrite: !transparent,
     side: THREE.FrontSide,
+    toneMapped: false,
   });
 }
 
 /**
- * Brightness-only material for simple meshes (entities, uniform light).
- * Scalar path: color.r = sky, color.g = block (white tint).
+ * Brightness-only material for simple solid-color meshes (no texture).
+ * Uses the same aSky / color(block RGB) layout as createVoxelBrightnessMaterial.
  * @param {{ color?: number, opacity?: number, transparent?: boolean }} [opts]
  */
 export function createUniformBrightnessMaterial(opts = {}) {
@@ -218,34 +271,33 @@ export function createUniformBrightnessMaterial(opts = {}) {
       uEmissiveMul: { value: 0 },
       ...sharedLightUniforms(),
     },
-    vertexShader: /* glsl */ `
-      attribute vec3 color;
-      varying vec2 vUv;
-      varying float vSky;
-      varying vec3 vBlock;
-      varying vec3 vWorldPos;
-      void main() {
-        vUv = uv;
-        vSky = color.r;
-        vBlock = vec3(color.g);
-        vec4 worldPos = modelMatrix * vec4(position, 1.0);
-        vWorldPos = worldPos.xyz;
-        gl_Position = projectionMatrix * viewMatrix * worldPos;
-      }
-    `,
+    vertexShader: VOXEL_VERTEX,
     fragmentShader: VOXEL_FRAGMENT,
     transparent,
     depthWrite: !transparent,
+    toneMapped: false,
   });
 }
 
-/** Attach full-bright white vertex colors so uniform meshes stay visible. */
+/**
+ * Full-bright attributes for entity meshes on createVoxelBrightnessMaterial.
+ * color = static block RGB; aSky = skylight (matches world voxel layout).
+ */
 export function setGeometryFullBright(geometry) {
   const count = geometry.attributes.position.count;
   const colors = new Float32Array(count * 3);
+  const skies = new Float32Array(count);
+  const prevBlocks = new Float32Array(count * 3);
+  const prevSkies = new Float32Array(count);
+  const blendStarts = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    colors[i * 3] = 1;
-    colors[i * 3 + 1] = 0;
+    skies[i] = 1;
+    prevSkies[i] = 1;
+    blendStarts[i] = -1e6;
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute('aSky', new THREE.BufferAttribute(skies, 1));
+  geometry.setAttribute('aPrevBlock', new THREE.BufferAttribute(prevBlocks, 3));
+  geometry.setAttribute('aPrevSky', new THREE.BufferAttribute(prevSkies, 1));
+  geometry.setAttribute('aBlendStart', new THREE.BufferAttribute(blendStarts, 1));
 }

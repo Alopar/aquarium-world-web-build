@@ -22,6 +22,7 @@ import { BlockInteraction } from './systems/block-interaction.js';
 import { ProjectileSystem } from './systems/projectile-system.js';
 import { LootSystem } from './systems/loot-system.js';
 import { BombSystem } from './systems/bomb-system.js';
+import { SignalRocketSystem } from './systems/signal-rocket-system.js';
 import { SoundSystem } from './systems/sound.js';
 import { loadBlockTextures, disposeBlockTextures } from './materials/textures.js';
 import { SpaceSky } from './systems/space-sky.js';
@@ -102,6 +103,7 @@ export class App {
     this.projectileSystem = null;
     this.lootSystem = null;
     this.bombSystem = null;
+    this.signalRocketSystem = null;
     this.spaceSky = null;
     this.dayNight = null;
     this.weather = null;
@@ -253,11 +255,16 @@ export class App {
         this.sound,
         this.lootSystem,
       );
+      this.signalRocketSystem = new SignalRocketSystem(this.scene, this.world);
       this.blockSupport.projectileSystem = this.projectileSystem;
       this.blockSupport.lootSystem = this.lootSystem;
       this.blockInteraction.projectileSystem = this.projectileSystem;
       this.blockInteraction.lootSystem = this.lootSystem;
       this.blockInteraction.bombSystem = this.bombSystem;
+      this.blockInteraction.signalRocketSystem = this.signalRocketSystem;
+      this.blockInteraction.setSlot(2, 'light_bomb', 16);
+      this.blockInteraction.setSlot(3, 'blue_lumen', 99);
+      this.blockInteraction.setSlot(4, 'signal_rocket', 16);
       this.blockInteraction.setSlot(5, 'bomb', 16);
       this.blockInteraction.setSlot(6, 'lumen', 99);
       this.blockInteraction.setSlot(7, 'water', 99);
@@ -344,6 +351,7 @@ export class App {
     this.projectileSystem?.update(dt);
     this.lootSystem?.update(dt);
     this.bombSystem?.update(dt);
+    this.signalRocketSystem?.update(dt);
     this.world?.lighting?.tickDynamicLights(dt);
     this.spaceSky?.update(this.camera);
     this.dayNight?.update(dt, this.playerController, this.spaceSky, this.world?.fluidField, this.world);
@@ -390,6 +398,7 @@ export class App {
     this.projectileSystem?.dispose();
     this.lootSystem?.dispose();
     this.bombSystem?.dispose();
+    this.signalRocketSystem?.dispose();
     this.weather?.dispose();
     this.particleSystem?.dispose();
     this.sound?.dispose();

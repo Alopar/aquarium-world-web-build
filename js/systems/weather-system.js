@@ -11,7 +11,7 @@ const SIDE = [
 
 function blocksRain(id) {
   const mat = getMaterial(id);
-  return mat.solid === true && mat.opaque === true && mat.organic !== true;
+  return mat.solid === true && mat.opaque === true;
 }
 
 function isOpenToSky(grid, x, surfaceY, z) {
@@ -45,7 +45,6 @@ function findHitY(grid, wx, wz, fromY) {
     if (id === 'air') continue;
 
     const mat = getMaterial(id);
-    if (mat.organic) continue;
     if (mat.liquid) return (y + Math.min(1, 0.35)) * VOXEL_SIZE;
     if (mat.solid) return (y + 1) * VOXEL_SIZE;
   }

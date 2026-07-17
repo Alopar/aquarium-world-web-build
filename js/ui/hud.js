@@ -1,5 +1,5 @@
 import { getStackDef } from '../items/stack.js';
-import { isExplosive, isItem } from '../items/registry.js';
+import { isExplosive, isFlashOnlyExplosive, isItem, isSignalRocket } from '../items/registry.js';
 import { DAY_NIGHT, HOTBAR_SLOTS } from '../constants.js';
 
 const PERIOD_LABELS = {
@@ -145,7 +145,13 @@ export class GameHud {
       const useLabel = touch ? 'Использовать' : 'ПКМ';
       const selected = this.inventory?.getSelectedMaterial?.()
         ?? this.interaction?.getSelectedMaterial?.();
-      if (selected && isExplosive(selected)) {
+      if (selected && isSignalRocket(selected)) {
+        this.placeModeEl.textContent = `${useLabel}: выстрелить ракету`;
+        this.placeModeEl.dataset.mode = 'signal-rocket';
+      } else if (selected && isFlashOnlyExplosive(selected)) {
+        this.placeModeEl.textContent = `${useLabel}: бросить световую бомбу`;
+        this.placeModeEl.dataset.mode = 'light-bomb';
+      } else if (selected && isExplosive(selected)) {
         this.placeModeEl.textContent = `${useLabel}: бросить бомбу`;
         this.placeModeEl.dataset.mode = 'bomb';
       } else if (selected && isItem(selected)) {

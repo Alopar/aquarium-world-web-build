@@ -10,7 +10,7 @@ import {
   isResourceBlock,
   isSolid,
 } from '../materials/registry.js';
-import { isExplosive, isItem } from '../items/registry.js';
+import { isExplosive, isItem, isSignalRocket } from '../items/registry.js';
 import { getFluid } from '../fluids/registry.js';
 import { getGas } from '../gases/registry.js';
 import { blockIntersectsPlayerAabb } from '../physics/voxel-collision.js';
@@ -104,7 +104,7 @@ export function voxelRaycast(origin, direction, grid, maxDistance = RAYCAST_MAX_
 }
 
 export class BlockInteraction {
-  constructor(world, camera, canvas, playerController, inventory, sound = null, projectileSystem = null, particleSystem = null, lootSystem = null, bombSystem = null) {
+  constructor(world, camera, canvas, playerController, inventory, sound = null, projectileSystem = null, particleSystem = null, lootSystem = null, bombSystem = null, signalRocketSystem = null) {
     this.world = world;
     this.camera = camera;
     this.canvas = canvas;
@@ -115,6 +115,7 @@ export class BlockInteraction {
     this.particleSystem = particleSystem;
     this.lootSystem = lootSystem;
     this.bombSystem = bombSystem;
+    this.signalRocketSystem = signalRocketSystem;
     this.placeMode = 'place';
     this.highlight = null;
     this.listeners = new Set();
@@ -190,9 +191,17 @@ export class BlockInteraction {
       const direction = new THREE.Vector3();
       this.camera.getWorldDirection(direction);
 
+      if (isSignalRocket(materialId)) {
+        if (!this.signalRocketSystem) return;
+        if (this.signalRocketSystem.throw(this.camera.position, direction)) {
+          this.removeFromSelectedSlot();
+        }
+        return;
+      }
+
       if (isExplosive(materialId)) {
         if (!this.bombSystem) return;
-        if (this.bombSystem.throw(this.camera.position, direction)) {
+        if (this.bombSystem.throw(this.camera.position, direction, materialId)) {
           this.removeFromSelectedSlot();
         }
         return;

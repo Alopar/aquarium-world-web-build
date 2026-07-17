@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { BOMB, BOMB_FLASH, PLAYER, VOXEL_SIZE } from '../constants.js';
+import { BOMB, BOMB_FLASH, LIGHT_BOMB_FLASH, PLAYER, VOXEL_SIZE } from '../constants.js';
 import { hasDrops, isBreakable, isResourceBlock } from '../materials/registry.js';
+import { isFlashOnlyExplosive } from '../items/registry.js';
 import { ThrownBomb } from '../entities/thrown-bomb.js';
 
 /**
- * Throwable bombs: loot-style throw → fuse → spherical voxel blast.
+ * Throwable bombs: loot-style throw → fuse → blast or light flash.
  */
 export class BombSystem {
   constructor(scene, world, playerController, playerHealth, particleSystem, sound, lootSystem) {
@@ -30,13 +31,20 @@ export class BombSystem {
     return this.bombs.length;
   }
 
-  throw(origin, direction) {
+  /**
+   * @param {THREE.Vector3} origin
+   * @param {THREE.Vector3} direction
+   * @param {string} [itemId='bomb']
+   */
+  throw(origin, direction, itemId = 'bomb') {
     this._spawnDir.copy(direction).normalize();
     this._spawnPos.copy(origin).addScaledVector(this._spawnDir, BOMB.spawnOffset);
     this._spawnVel.copy(this._spawnDir).multiplyScalar(BOMB.throwSpeed);
     this._spawnVel.y += 1.4;
 
-    const bomb = new ThrownBomb(this._spawnPos, this._spawnVel);
+    const bomb = new ThrownBomb(this._spawnPos, this._spawnVel, {
+      flashOnly: isFlashOnlyExplosive(itemId),
+    });
     this.bombs.push(bomb);
     this.group.add(bomb.mesh);
     return true;
@@ -50,7 +58,11 @@ export class BombSystem {
       bomb.update(grid, dt, this.world.lighting);
 
       if (bomb.detonated) {
-        this.explode(bomb.position.x, bomb.position.y, bomb.position.z);
+        if (bomb.flashOnly) {
+          this.flash(bomb.position.x, bomb.position.y, bomb.position.z);
+        } else {
+          this.explode(bomb.position.x, bomb.position.y, bomb.position.z);
+        }
         this.removeAt(i);
         continue;
       }
@@ -59,6 +71,26 @@ export class BombSystem {
         this.removeAt(i);
       }
     }
+  }
+
+  /** Bright white flash — no block damage, no player damage. */
+  flash(worldX, worldY, worldZ) {
+    const cx = Math.floor(worldX / VOXEL_SIZE);
+    const cy = Math.floor(worldY / VOXEL_SIZE);
+    const cz = Math.floor(worldZ / VOXEL_SIZE);
+
+    this.sound?.playExplosion?.();
+
+    const flashId = `light-bomb-flash-${++this._flashSeq}`;
+    this.world.lighting.pulseDynamicLight(
+      flashId,
+      (cx + 0.5) * VOXEL_SIZE,
+      (cy + 0.5) * VOXEL_SIZE,
+      (cz + 0.5) * VOXEL_SIZE,
+      LIGHT_BOMB_FLASH.level,
+      LIGHT_BOMB_FLASH.color,
+      LIGHT_BOMB_FLASH.duration,
+    );
   }
 
   /**

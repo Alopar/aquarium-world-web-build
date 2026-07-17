@@ -1,5 +1,4 @@
 import { LIGHTING, VOXEL_SIZE } from '../constants.js';
-import { getLightLevel } from '../materials/registry.js';
 import { setGeometryFullBright } from '../shaders/voxel-brightness-material.js';
 
 function emptyLight() {
@@ -47,19 +46,37 @@ export function applyMeshVoxelBrightness(mesh, lighting, worldX, worldY, worldZ)
   const sample = sampleVoxelBrightness(lighting, bx, by, bz);
 
   let colorAttr = mesh.geometry.getAttribute('color');
-  if (!colorAttr) {
+  let skyAttr = mesh.geometry.getAttribute('aSky');
+  if (!colorAttr || !skyAttr) {
     setGeometryFullBright(mesh.geometry);
     colorAttr = mesh.geometry.getAttribute('color');
+    skyAttr = mesh.geometry.getAttribute('aSky');
   }
 
-  // Uniform entity materials still use color.rg = sky / scalar block.
-  const arr = colorAttr.array;
-  for (let i = 0; i < arr.length; i += 3) {
-    arr[i] = sample.sky;
-    arr[i + 1] = sample.block;
-    arr[i + 2] = 0;
+  // Entity meshes: own albedo × scalar air brightness (no colored blocklight tint).
+  const colors = colorAttr.array;
+  const skies = skyAttr.array;
+  const block = sample.block;
+  for (let i = 0; i < skies.length; i++) {
+    skies[i] = sample.sky;
+    colors[i * 3] = block;
+    colors[i * 3 + 1] = block;
+    colors[i * 3 + 2] = block;
   }
   colorAttr.needsUpdate = true;
+  skyAttr.needsUpdate = true;
+
+  const prevBlock = mesh.geometry.getAttribute('aPrevBlock');
+  const prevSky = mesh.geometry.getAttribute('aPrevSky');
+  const blendStart = mesh.geometry.getAttribute('aBlendStart');
+  if (prevBlock && prevSky && blendStart) {
+    prevBlock.array.set(colors);
+    prevSky.array.set(skies);
+    blendStart.array.fill(-1e6);
+    prevBlock.needsUpdate = true;
+    prevSky.needsUpdate = true;
+    blendStart.needsUpdate = true;
+  }
 }
 
 /**
@@ -115,10 +132,23 @@ export function sampleVoxelStaticBrightness(lighting, x, y, z) {
   };
 }
 
+/** Per-face sky multiplier for pure skylight (no block light). */
+function skyFaceShadeMul(dir) {
+  if (!LIGHTING.skyFaceShadeEnabled) return 1;
+  const s = LIGHTING.skyFaceShade;
+  if (dir[1] > 0) return s.top;
+  if (dir[1] < 0) return s.bottom;
+  if (dir[0] > 0) return s.east;
+  if (dir[0] < 0) return s.west;
+  if (dir[2] > 0) return s.south;
+  return s.north;
+}
+
 /**
  * Face brightness: sky + **static** block RGB from the outward cell (MC-style).
  * Dynamic light is applied in the fragment shader via 3D texture.
- * Self static block light is used only for emitters.
+ * Emitters do not bake their own cell light onto their faces — glow is emissive.
+ * Pure-skylight faces get a tiny directional shade (~11:00 SE sun).
  */
 export function sampleFaceBrightness(lighting, x, y, z, dir) {
   if (!lighting) return emptyLight();
@@ -131,17 +161,18 @@ export function sampleFaceBrightness(lighting, x, y, z, dir) {
     ?? lighting.getBlockLightRgb.bind(lighting);
   const getSky = lighting.getSkylight.bind(lighting);
 
-  const outwardSky = getSky(ox, oy, oz) / max;
-  let rgb = getRgb(ox, oy, oz);
+  let outwardSky = getSky(ox, oy, oz) / max;
+  const rgb = getRgb(ox, oy, oz);
+  const block = Math.max(rgb.r, rgb.g, rgb.b) / max;
 
-  const selfId = lighting.grid?.get?.(x, y, z);
-  if (selfId && getLightLevel(selfId) > 0) {
-    rgb = maxRgb(rgb, getRgb(x, y, z));
+  // No static block light → fake soft sun direction on sky only.
+  if (block <= 0 && outwardSky > 0) {
+    outwardSky *= skyFaceShadeMul(dir);
   }
 
   return {
     sky: outwardSky,
-    block: Math.max(rgb.r, rgb.g, rgb.b) / max,
+    block,
     blockR: rgb.r / max,
     blockG: rgb.g / max,
     blockB: rgb.b / max,

@@ -173,6 +173,20 @@ export const MATERIALS = {
     lightLevel: 14,
     lightColor: 0xffc14d,
   },
+  /** Слабый синий люмен — cool blocklight. */
+  blue_lumen: {
+    id: 'blue_lumen',
+    name: 'Синий люмен',
+    solid: true,
+    breakable: true,
+    opaque: false,
+    color: 0xa8d4ff,
+    opacity: 0.9,
+    emissive: 0x4488ff,
+    emissiveIntensity: 1.2,
+    lightLevel: 15,
+    lightColor: 0x4488ff,
+  },
   water: {
     id: 'water',
     name: 'Вода',
@@ -234,7 +248,7 @@ export function isOrganic(id) {
   return getMaterial(id).organic === true;
 }
 
-/** Solid that participates in block support / adhesion. Organic does not stick. */
+/** Solid that participates in block support / adhesion. Organic does not provide support. */
 export function isStructuralSolid(id) {
   const mat = getMaterial(id);
   return mat.solid === true && mat.organic !== true;

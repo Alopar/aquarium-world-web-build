@@ -202,9 +202,12 @@ export const CHUNK_SIZE = 16;
 /** Voxel skylight + block-light fields (0…maxLevel). */
 export const LIGHTING = {
   maxLevel: 15,
-  minBrightness: 0.06,
+  /** Floor brightness at light level 0 (caves / night). */
+  minBrightness: 0.01,
+  /** Peak brightness at light level 15 (full day / full blocklight). */
+  maxBrightness: 0.98,
   blockLightFalloff: 1,
-  /** Linear display lerp when voxel brightness changes (seconds). */
+  /** Linear display lerp when voxel brightness decreases (seconds). Increases snap instantly. */
   brightnessLerpSeconds: 0.25,
   /** Max simultaneous transient emitters (torch, projectile, flash). */
   maxDynamicLights: 8,
@@ -213,6 +216,16 @@ export const LIGHTING = {
   heldLightForward: 0.35,
   /** Seconds between −1 steps on marked dynamic cells. */
   dynamicDecayInterval: 0.045,
+  /** Soft directional tone on pure-skylight faces (runtime; graphics panel). */
+  skyFaceShadeEnabled: true,
+  skyFaceShade: {
+    top: 1.0, // +Y
+    east: 0.92, // +X — toward morning sun
+    south: 0.92, // +Z — toward morning sun
+    west: 0.88, // −X — shade
+    north: 0.88, // −Z — shade
+    bottom: 0.8, // −Y
+  },
 };
 
 /** Bomb explosion flash (transient voxel light). */
@@ -220,6 +233,29 @@ export const BOMB_FLASH = {
   level: 14,
   color: { r: 1, g: 0.45, b: 0.12 },
   duration: 0.28,
+};
+
+/** Световая бомба — вспышка без разрушения. */
+export const LIGHT_BOMB_FLASH = {
+  level: 15,
+  color: { r: 1, g: 1, b: 1 },
+  duration: 0.45,
+};
+
+/** Сигнальная ракета: прямая траектория + красный свет, горе́ние на месте после попадания. */
+export const SIGNAL_ROCKET = {
+  size: 0.22,
+  length: 0.55,
+  throwSpeed: 22,
+  spawnOffset: 1.25,
+  maxLifetime: 12,
+  subSteps: 8,
+  lightLevel: 15,
+  lightColor: { r: 1, g: 0.08, b: 0.02 },
+  burnTime: 10,
+  spinSpeed: 0,
+  color: 0xc02010,
+  emissive: 0xff2200,
 };
 
 /** Сколько грязных чанков пересобирать за один кадр */

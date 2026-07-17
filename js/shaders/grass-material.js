@@ -20,6 +20,7 @@ const FOLIAGE_VERTEX = /* glsl */ `
   varying vec3 vBlock;
   varying vec3 vTint;
   varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
 
   uniform float uTime;
   uniform float uBrightTime;
@@ -42,6 +43,7 @@ const FOLIAGE_VERTEX = /* glsl */ `
     tip *= tip;
     vec3 instOrigin = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
     vWorldPos = instOrigin + transformed;
+    vWorldNormal = vec3(0.0, 1.0, 0.0);
     float phase = instOrigin.x * 0.7 + instOrigin.z * 0.55;
     float wind = sin(uTime * 1.8 + phase) * uWindStrength * tip;
     transformed.x += wind;
@@ -57,11 +59,13 @@ const FOLIAGE_FRAGMENT = /* glsl */ `
   uniform float uAlphaTest;
   uniform float uDaySkyLight;
   uniform float uMinBrightness;
+  uniform float uMaxBrightness;
   varying vec2 vUv;
   varying float vSky;
   varying vec3 vBlock;
   varying vec3 vTint;
   varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
 
   ${BRIGHTNESS_GLSL}
   ${DYNAMIC_LIGHT_GLSL}
@@ -70,10 +74,11 @@ const FOLIAGE_FRAGMENT = /* glsl */ `
     vec4 tex = texture2D(uMap, vUv);
     if (tex.a < uAlphaTest) discard;
 
-    vec3 block = combineBlockLight(vBlock, vWorldPos);
-    vec3 light = mcLightColor(vSky, block, uDaySkyLight, uMinBrightness);
+    vec3 block = combineBlockLight(vBlock, vWorldPos, vWorldNormal);
+    vec3 light = mcLightColor(vSky, block, uDaySkyLight, uMinBrightness, uMaxBrightness);
     vec3 albedo = tex.rgb * vTint;
     gl_FragColor = vec4(albedo * light, 1.0);
+    gl_FragColor = linearToOutputTexel(gl_FragColor);
   }
 `;
 
@@ -91,6 +96,7 @@ export function createFoliageMaterial(textureId, windStrength = 0.05, bladeHeigh
       uBladeHeight: { value: bladeHeight },
       uDaySkyLight: brightnessUniforms.uDaySkyLight,
       uMinBrightness: brightnessUniforms.uMinBrightness,
+      uMaxBrightness: brightnessUniforms.uMaxBrightness,
       uBrightTime: brightnessUniforms.uBrightTime,
       uBrightLerp: brightnessUniforms.uBrightLerp,
       uDynamicLight: brightnessUniforms.uDynamicLight,
@@ -102,6 +108,7 @@ export function createFoliageMaterial(textureId, windStrength = 0.05, bladeHeigh
     transparent: false,
     depthWrite: true,
     side: THREE.DoubleSide,
+    toneMapped: false,
   });
 }
 

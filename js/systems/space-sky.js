@@ -54,6 +54,7 @@ const SKY_FRAGMENT_SHADER = /* glsl */ `
 
     vec4 tex = texture2D(uTexture, vUv);
     gl_FragColor = vec4(tex.rgb, tex.a * visibility);
+    gl_FragColor = linearToOutputTexel(gl_FragColor);
   }
 `;
 
@@ -117,6 +118,7 @@ export class SpaceSky {
       transparent: true,
       depthWrite: false,
       fog: false,
+      toneMapped: false,
     });
 
     this.mesh = new THREE.Mesh(geometry, this.material);

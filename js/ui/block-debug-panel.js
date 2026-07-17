@@ -1,5 +1,6 @@
 import { getMaterial, getLightLevel } from '../materials/registry.js';
 import { LIGHTING } from '../constants.js';
+import { mcBrightness } from '../shaders/voxel-brightness-material.js';
 
 function row(label, value) {
   const el = document.createElement('div');
@@ -68,7 +69,7 @@ export class BlockDebugPanel {
 
   /**
    * @param {{
-   *   hit: { block: { x: number, y: number, z: number } } | null,
+   *   hit: { block: { x: number, y: number, z: number }, face?: { x: number, y: number, z: number } } | null,
    *   world: import('../world/world.js').AquariumWorld | null,
    *   dayAmount?: number,
    * }} opts
@@ -86,21 +87,27 @@ export class BlockDebugPanel {
       return;
     }
 
+    // Light lives in the outward air cell (MC face rule), not inside opaque voxels.
+    const lx = hit.face?.x ?? x;
+    const ly = hit.face?.y ?? y;
+    const lz = hit.face?.z ?? z;
+
     const mat = getMaterial(id);
-    const sky = world.lighting?.getSkylight(x, y, z) ?? 0;
-    const block = world.lighting?.getStaticBlockLight?.(x, y, z)
-      ?? world.lighting?.getBlockLight(x, y, z) ?? 0;
-    const dyn = world.lighting?.getDynamicLight?.(x, y, z) ?? 0;
-    const rgb = world.lighting?.getStaticBlockLightRgb?.(x, y, z)
-      ?? world.lighting?.getBlockLightRgb?.(x, y, z) ?? { r: 0, g: 0, b: 0 };
-    const dynRgb = world.lighting?.getDynamicLightRgb?.(x, y, z) ?? { r: 0, g: 0, b: 0 };
+    const sky = world.lighting?.getSkylight(lx, ly, lz) ?? 0;
+    const rgb = world.lighting?.getStaticBlockLightRgb?.(lx, ly, lz)
+      ?? world.lighting?.getBlockLightRgb?.(lx, ly, lz) ?? { r: 0, g: 0, b: 0 };
     const emit = getLightLevel(id);
+    const block = Math.max(rgb.r, rgb.g, rgb.b);
+    const dyn = world.lighting?.getDynamicLight?.(lx, ly, lz) ?? 0;
+    const dynRgb = world.lighting?.getDynamicLightRgb?.(lx, ly, lz) ?? { r: 0, g: 0, b: 0 };
     const skyLv = (sky / LIGHTING.maxLevel) * dayAmount;
-    const blockR = Math.max(rgb.r, dynRgb.r) / LIGHTING.maxLevel;
-    const blockG = Math.max(rgb.g, dynRgb.g) / LIGHTING.maxLevel;
-    const blockB = Math.max(rgb.b, dynRgb.b) / LIGHTING.maxLevel;
+    // Emissive surfaces ignore colored blocklight in the shader.
+    const useBlock = !(mat.emissive != null || emit > 0);
+    const blockR = useBlock ? Math.max(rgb.r, dynRgb.r) / LIGHTING.maxLevel : 0;
+    const blockG = useBlock ? Math.max(rgb.g, dynRgb.g) / LIGHTING.maxLevel : 0;
+    const blockB = useBlock ? Math.max(rgb.b, dynRgb.b) / LIGHTING.maxLevel : 0;
     const level = Math.max(skyLv, blockR, blockG, blockB);
-    const bright = LIGHTING.minBrightness + (1 - LIGHTING.minBrightness) * level;
+    const bright = mcBrightness(level);
 
     let volume = '';
     if (mat.liquid) volume = String(world.getFluidVolume(x, y, z));

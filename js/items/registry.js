@@ -92,6 +92,23 @@ export const ITEMS = {
     /** Thrown as a timed explosive — not ordinary loot pickup. */
     explosive: true,
   },
+  light_bomb: {
+    id: 'light_bomb',
+    name: 'Световая бомба',
+    color: 0xf0f4ff,
+    emissive: 0xffffff,
+    explosive: true,
+    /** Fuse detonation = bright white flash only, no blast. */
+    flashOnly: true,
+  },
+  signal_rocket: {
+    id: 'signal_rocket',
+    name: 'Сигнальная ракета',
+    color: 0xc02010,
+    emissive: 0xff2200,
+    /** Straight-shot flare: red dynamic light, burns after impact. */
+    signalRocket: true,
+  },
 };
 
 export function getItem(id) {
@@ -104,6 +121,14 @@ export function isItem(id) {
 
 export function isExplosive(id) {
   return Boolean(getItem(id)?.explosive);
+}
+
+export function isFlashOnlyExplosive(id) {
+  return Boolean(getItem(id)?.flashOnly);
+}
+
+export function isSignalRocket(id) {
+  return Boolean(getItem(id)?.signalRocket);
 }
 
 export function isEquipable(id) {

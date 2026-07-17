@@ -1447,7 +1447,7 @@ body.is-mobile .menu-fullscreen {
 .graphics-panel__window {
   position: relative;
   width: min(420px, 100%);
-  max-height: min(90vh, 640px);
+  max-height: min(90vh, 760px);
   overflow: auto;
   padding: 18px 20px 16px;
   background: var(--panel);

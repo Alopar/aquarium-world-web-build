@@ -21,7 +21,7 @@ function isSolidMaterial(id) {
 
 function blocksSkylightMaterial(id) {
   const mat = getMaterial(id);
-  return mat.solid === true && mat.opaque === true && mat.organic !== true;
+  return mat.solid === true && mat.opaque === true;
 }
 
 function blocksBlockLightMaterial(id) {
@@ -86,9 +86,9 @@ export class AquariumWorld {
       const skyDecrease = !blocksSkylightMaterial(prevId) && blocksSkylightMaterial(nextId);
       const emitChanged = getLightLevel(prevId) !== getLightLevel(nextId);
       const occlusionChanged = blocksBlockLightMaterial(prevId) !== blocksBlockLightMaterial(nextId);
-      // Skip empty block-light rebuilds when digging in total darkness (no lantern nearby).
+      // Rebuild when emit changes, or when opening/closing a path near existing light.
       const blockLightNeeded = emitChanged
-        || (occlusionChanged && this.lighting.hasBlockLightNear(x, y, z, 1));
+        || (occlusionChanged && this.lighting.hasBlockLightNear(x, y, z, LIGHTING.maxLevel));
 
       this.lighting.markDirtyAt(x, y, z, {
         skyDecrease,
@@ -97,7 +97,6 @@ export class AquariumWorld {
 
       this.meshBuilder.markDirtyColumnsAt(x, z);
       this.meshBuilder.markDirtyAt(x, y, z);
-      // Sky flood can reach up to maxLevel sideways — remesh that radius (async).
       this.meshBuilder.markDirtyInRadius(x, y, z, LIGHTING.maxLevel);
 
       if (this.fluidMeshBuilder.enabled) {

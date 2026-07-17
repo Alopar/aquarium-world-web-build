@@ -2,7 +2,9 @@ import {
   GRAPHICS_OPTIONS,
   GRAPHICS_SLIDERS,
   clearGraphicsOverrides,
+  clampGraphicsSliderValue,
   createQualitySettings,
+  formatGraphicsSliderValue,
   isTickOptionEnabled,
 } from '../quality-settings.js';
 import {
@@ -12,8 +14,6 @@ import {
   setGraphicsOption,
   setGraphicsSlider,
 } from '../graphics-controller.js';
-import { clampFogViewDistance } from '../systems/fog-controller.js';
-import { clampPixelScale } from '../systems/pixel-scale.js';
 
 const TOGGLE_KEY = 'KeyG';
 
@@ -174,16 +174,10 @@ export class GraphicsPanel {
     for (const slider of GRAPHICS_SLIDERS) {
       const input = this.sliderInputs.get(slider.key);
       const valueEl = this.sliderValueEls.get(slider.key);
-      const raw = quality[slider.key];
-      const value = slider.key === 'pixelScale'
-        ? clampPixelScale(raw)
-        : clampFogViewDistance(raw);
+      const value = clampGraphicsSliderValue(slider, quality[slider.key]);
       if (input) input.value = String(value);
       if (valueEl) {
-        const text = slider.key === 'pixelScale'
-          ? value.toFixed(2)
-          : String(Math.round(value));
-        valueEl.textContent = `${text} ${slider.unit ?? ''}`.trim();
+        valueEl.textContent = `${formatGraphicsSliderValue(slider, value)} ${slider.unit ?? ''}`.trim();
       }
       const row = input?.closest('.graphics-panel__slider-row');
       const requires = slider.requires;

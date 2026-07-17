@@ -11,9 +11,10 @@ function cellSolid(grid, x, y, z) {
 
 /**
  * Thrown bomb entity — loot-like physics with a fuse, no pickup.
+ * @param {{ flashOnly?: boolean }} [options]
  */
 export class ThrownBomb {
-  constructor(position, velocity) {
+  constructor(position, velocity, options = {}) {
     this.position = position.clone();
     this.velocity = velocity.clone();
     this.age = 0;
@@ -21,15 +22,19 @@ export class ThrownBomb {
     this.onGround = false;
     this.alive = true;
     this.detonated = false;
+    this.flashOnly = Boolean(options.flashOnly);
+
+    const color = this.flashOnly ? 0xf0f4ff : 0x2a1a12;
+    const emissive = this.flashOnly ? 0xffffff : 0xff4400;
 
     const geometry = new THREE.BoxGeometry(BOMB.size, BOMB.size, BOMB.size);
     setGeometryFullBright(geometry);
     this.mesh = new THREE.Mesh(
       geometry,
       createVoxelBrightnessMaterial({
-        color: 0x2a1a12,
-        emissive: 0xff4400,
-        emissiveIntensity: 0.4,
+        color,
+        emissive,
+        emissiveIntensity: this.flashOnly ? 0.85 : 0.4,
       }),
     );
     this.syncMesh();

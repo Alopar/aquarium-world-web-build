@@ -1,9 +1,15 @@
 import { LIGHTING } from '../constants.js';
 import { brightnessUniforms } from '../shaders/voxel-brightness-material.js';
 
+/** Peak light level among sky + block RGB (0…maxLevel). */
+function peakLevel(sky, r, g, b) {
+  return Math.max(sky, r, g, b);
+}
+
 /**
  * Tracks voxels whose baked light changed and exposes prev→target for
  * shader-side linear interpolation (~brightnessLerpSeconds).
+ * Brightening snaps instantly; dimming lerps over brightnessLerpSeconds.
  * Blocklight prev/target are RGB channels.
  */
 export class BrightnessBlendSystem {
@@ -96,32 +102,48 @@ export class BrightnessBlendSystem {
             continue;
           }
 
+          let curSky;
+          let curR;
+          let curG;
+          let curB;
           if (this.activeFlag[i]) {
             const t = Math.min(1, Math.max(0, (now - this.startTime[i]) / duration));
-            this.fromSky[i] = Math.round(this.fromSky[i] + (this.committedSky[i] - this.fromSky[i]) * t);
-            this.fromBlockR[i] = Math.round(
-              this.fromBlockR[i] + (this.committedBlockR[i] - this.fromBlockR[i]) * t,
-            );
-            this.fromBlockG[i] = Math.round(
-              this.fromBlockG[i] + (this.committedBlockG[i] - this.fromBlockG[i]) * t,
-            );
-            this.fromBlockB[i] = Math.round(
-              this.fromBlockB[i] + (this.committedBlockB[i] - this.fromBlockB[i]) * t,
-            );
+            curSky = Math.round(this.fromSky[i] + (this.committedSky[i] - this.fromSky[i]) * t);
+            curR = Math.round(this.fromBlockR[i] + (this.committedBlockR[i] - this.fromBlockR[i]) * t);
+            curG = Math.round(this.fromBlockG[i] + (this.committedBlockG[i] - this.fromBlockG[i]) * t);
+            curB = Math.round(this.fromBlockB[i] + (this.committedBlockB[i] - this.fromBlockB[i]) * t);
           } else {
-            this.fromSky[i] = this.committedSky[i];
-            this.fromBlockR[i] = this.committedBlockR[i];
-            this.fromBlockG[i] = this.committedBlockG[i];
-            this.fromBlockB[i] = this.committedBlockB[i];
-            this.activeFlag[i] = 1;
-            this.active.push(i);
+            curSky = this.committedSky[i];
+            curR = this.committedBlockR[i];
+            curG = this.committedBlockG[i];
+            curB = this.committedBlockB[i];
           }
 
-          this.startTime[i] = now;
           this.committedSky[i] = nextSky;
           this.committedBlockR[i] = nextR;
           this.committedBlockG[i] = nextG;
           this.committedBlockB[i] = nextB;
+
+          // Brighten → snap; dim → lerp from current display value.
+          if (peakLevel(nextSky, nextR, nextG, nextB) >= peakLevel(curSky, curR, curG, curB)) {
+            this.fromSky[i] = nextSky;
+            this.fromBlockR[i] = nextR;
+            this.fromBlockG[i] = nextG;
+            this.fromBlockB[i] = nextB;
+            this.activeFlag[i] = 0;
+            this.startTime[i] = now - duration;
+            continue;
+          }
+
+          this.fromSky[i] = curSky;
+          this.fromBlockR[i] = curR;
+          this.fromBlockG[i] = curG;
+          this.fromBlockB[i] = curB;
+          this.startTime[i] = now;
+          if (!this.activeFlag[i]) {
+            this.activeFlag[i] = 1;
+            this.active.push(i);
+          }
         }
       }
     }

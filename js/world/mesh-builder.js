@@ -404,6 +404,18 @@ export class MeshBuilder {
     this.scheduleLightFlush();
   }
 
+  /** Rebake sky/block light attributes on every chunk (e.g. sky-face shade tweak). */
+  markAllLightDirty() {
+    for (let cx = 0; cx < this.chunksX; cx++) {
+      for (let cy = 0; cy < this.chunksY; cy++) {
+        for (let cz = 0; cz < this.chunksZ; cz++) {
+          this.markChunkLightDirty(cx, cy, cz);
+        }
+      }
+    }
+    this.scheduleLightFlush();
+  }
+
   markChunkDirty(cx, cy, cz) {
     if (cx < 0 || cy < 0 || cz < 0) return;
     if (cx >= this.chunksX || cy >= this.chunksY || cz >= this.chunksZ) return;

@@ -13,7 +13,7 @@ const FACE_DIRS = [
 
 function blocksSkylight(id) {
   const mat = getMaterial(id);
-  return mat.solid === true && mat.opaque === true && mat.organic !== true;
+  return mat.solid === true && mat.opaque === true;
 }
 
 function blocksBlockLight(id) {
@@ -27,6 +27,30 @@ function clampColor(color) {
     g: Math.max(0, Math.min(1, color?.g ?? 1)),
     b: Math.max(0, Math.min(1, color?.b ?? 1)),
   };
+}
+
+/**
+ * Drop light intensity by `falloff` while keeping R:G:B ratios.
+ * Independent per-channel −1 turns yellow into pure red at the fringe.
+ * Peak channel(s) step by `falloff`; others scale down (floor) and stay
+ * non-zero until the light dies — hue softens, but doesn't strip to one channel.
+ * @returns {[number, number, number]}
+ */
+function attenuateRgb(r, g, b, falloff) {
+  const level = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  if (level <= falloff) return [0, 0, 0];
+  const next = level - falloff;
+  let nr = r === level ? next : Math.floor((r * next) / level);
+  let ng = g === level ? next : Math.floor((g * next) / level);
+  let nb = b === level ? next : Math.floor((b * next) / level);
+  if (r > 0) nr = Math.max(1, nr);
+  if (g > 0) ng = Math.max(1, ng);
+  if (b > 0) nb = Math.max(1, nb);
+  return [
+    Math.min(nr, next),
+    Math.min(ng, next),
+    Math.min(nb, next),
+  ];
 }
 
 /**
@@ -420,8 +444,7 @@ export class VoxelLightingSystem {
   }
 
   /**
-   * Decay marked dynamic cells, then raise from sustained sources.
-   * No mesh remesh — GPU reads dynamicTexture.
+   * Decay all marked cells, then re-flood from active sources.
    * @param {number} dt
    */
   tickDynamicLights(dt) {
@@ -438,6 +461,7 @@ export class VoxelLightingSystem {
       this._floodAllDynamicSources();
       this._dynSourcesDirty = false;
     } else if (this._dynSourcesDirty) {
+      this._floodAllDynamicSources();
       this._dynSourcesDirty = false;
     }
 
@@ -493,12 +517,7 @@ export class VoxelLightingSystem {
 
     for (let i = 0; i < lit.length; i++) {
       const idx = lit[i];
-      let r = dr[idx];
-      let g = dg[idx];
-      let b = db[idx];
-      if (r > 0) r--;
-      if (g > 0) g--;
-      if (b > 0) b--;
+      const [r, g, b] = attenuateRgb(dr[idx], dg[idx], db[idx], 1);
       if (r !== dr[idx] || g !== dg[idx] || b !== db[idx]) changed = true;
       dr[idx] = r;
       dg[idx] = g;
@@ -537,6 +556,7 @@ export class VoxelLightingSystem {
         q.push(src.x, src.y, src.z);
       } else if (dm[idx] > 0) {
         this._markDynLit(idx);
+        q.push(src.x, src.y, src.z);
       }
     }
 
@@ -547,9 +567,7 @@ export class VoxelLightingSystem {
       const idx = this._index(x, y, z);
       if (dm[idx] <= falloff) continue;
 
-      const nextR = dr[idx] > falloff ? dr[idx] - falloff : 0;
-      const nextG = dg[idx] > falloff ? dg[idx] - falloff : 0;
-      const nextB = db[idx] > falloff ? db[idx] - falloff : 0;
+      const [nextR, nextG, nextB] = attenuateRgb(dr[idx], dg[idx], db[idx], falloff);
       if (nextR <= 0 && nextG <= 0 && nextB <= 0) continue;
 
       for (const [dx, dy, dz] of FACE_DIRS) {
@@ -774,12 +792,19 @@ export class VoxelLightingSystem {
     const z1 = Math.min(this.sizeZ - 1, rawZ1);
     if (x0 > x1 || y0 > y1 || z0 > z1) return;
 
-    const falloff = LIGHTING.blockLightFalloff;
+    this._propX0 = x0;
+    this._propX1 = x1;
+    this._propY0 = y0;
+    this._propY1 = y1;
+    this._propZ0 = z0;
+    this._propZ1 = z1;
+
     const br = this.blockLightR;
     const bg = this.blockLightG;
     const bb = this.blockLightB;
     const bm = this.blockLight;
 
+    // Full wipe of the prop region — no annulus re-import of stale RGB.
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
         for (let z = z0; z <= z1; z++) {
@@ -803,29 +828,6 @@ export class VoxelLightingSystem {
       }
     }
 
-    for (let x = x0; x <= x1; x++) {
-      for (let y = y0; y <= y1; y++) {
-        for (let z = z0; z <= z1; z++) {
-          for (const [dx, dy, dz] of FACE_DIRS) {
-            const nx = x + dx;
-            const ny = y + dy;
-            const nz = z + dz;
-            if (nx >= x0 && nx <= x1 && ny >= y0 && ny <= y1 && nz >= z0 && nz <= z1) continue;
-            if (!this.grid.inBounds(nx, ny, nz)) continue;
-            const nidx = this._index(nx, ny, nz);
-            const ir = br[nidx] - falloff;
-            const ig = bg[nidx] - falloff;
-            const ib = bb[nidx] - falloff;
-            if (ir <= 0 && ig <= 0 && ib <= 0) continue;
-            const idx = this._index(x, y, z);
-            if (this._raiseRgb(br, bg, bb, bm, idx, Math.max(0, ir), Math.max(0, ig), Math.max(0, ib))) {
-              this._blockQueue.push(x, y, z, bm[idx]);
-            }
-          }
-        }
-      }
-    }
-
     if (this._blockQueue.length === 0) return;
     this._propagateStaticBlockIncrease();
   }
@@ -837,6 +839,12 @@ export class VoxelLightingSystem {
     const bg = this.blockLightG;
     const bb = this.blockLightB;
     const bm = this.blockLight;
+    const x0 = this._propX0 ?? 0;
+    const x1 = this._propX1 ?? this.sizeX - 1;
+    const y0 = this._propY0 ?? 0;
+    const y1 = this._propY1 ?? this.sizeY - 1;
+    const z0 = this._propZ0 ?? 0;
+    const z1 = this._propZ1 ?? this.sizeZ - 1;
 
     for (let i = 0; i < q.length; i += 4) {
       const x = q[i];
@@ -846,16 +854,14 @@ export class VoxelLightingSystem {
       const level = bm[idx];
       if (level <= falloff) continue;
 
-      const nextR = br[idx] > falloff ? br[idx] - falloff : 0;
-      const nextG = bg[idx] > falloff ? bg[idx] - falloff : 0;
-      const nextB = bb[idx] > falloff ? bb[idx] - falloff : 0;
+      const [nextR, nextG, nextB] = attenuateRgb(br[idx], bg[idx], bb[idx], falloff);
       if (nextR <= 0 && nextG <= 0 && nextB <= 0) continue;
 
       for (const [dx, dy, dz] of FACE_DIRS) {
         const nx = x + dx;
         const ny = y + dy;
         const nz = z + dz;
-        if (!this.grid.inBounds(nx, ny, nz)) continue;
+        if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || nz < z0 || nz > z1) continue;
 
         const nidx = this._index(nx, ny, nz);
         if (this._raiseRgb(br, bg, bb, bm, nidx, nextR, nextG, nextB)) {

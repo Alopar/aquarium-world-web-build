@@ -31,6 +31,43 @@ function collectSolidNeighbors(grid, x, y, z) {
 }
 
 /**
+ * True if (x,y,z) reaches floor (y=0 structural) through structural solids.
+ * Organic neighbors do not count as support.
+ */
+export function isStructurallySupported(grid, x, y, z) {
+  if (!grid.inBounds(x, y, z)) return false;
+  if (!isStructuralSolid(grid.get(x, y, z))) return false;
+  if (y === 0) return true;
+
+  const visited = new Set([cellKey(x, y, z)]);
+  const queue = [x, y, z];
+  let head = 0;
+
+  while (head < queue.length) {
+    const cx = queue[head++];
+    const cy = queue[head++];
+    const cz = queue[head++];
+
+    for (const [dx, dy, dz] of NEIGHBORS) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      const nz = cz + dz;
+      if (!grid.inBounds(nx, ny, nz)) continue;
+      if (!isStructuralSolid(grid.get(nx, ny, nz))) continue;
+
+      const key = cellKey(nx, ny, nz);
+      if (visited.has(key)) continue;
+      if (ny === 0) return true;
+
+      visited.add(key);
+      queue.push(nx, ny, nz);
+    }
+  }
+
+  return false;
+}
+
+/**
  * True if removing (rx,ry,rz) cannot cut support paths:
  * 0–1 solid neighbors, or all face-neighbors stay linked inside the 3×3×3 around the hole.
  */
@@ -253,33 +290,48 @@ export class BlockSupportSystem {
       this.bumpWorldRevision();
     }
 
-    if (this.pendingByKey.size === 0) return;
+    if (!isStructuralSolid(materialId)) return;
 
     const key = cellKey(x, y, z);
     if (this.pendingByKey.has(key)) return;
 
-    let bestTimer = Infinity;
-    let bestDistance = Infinity;
+    if (this.pendingByKey.size > 0) {
+      let bestTimer = Infinity;
+      let bestDistance = Infinity;
 
-    for (const [nx, ny, nz] of collectSolidNeighbors(this.world.grid, x, y, z)) {
-      const neighbor = this.pendingByKey.get(cellKey(nx, ny, nz));
-      if (!neighbor) continue;
-      if (neighbor.timer < bestTimer) {
-        bestTimer = neighbor.timer;
-        bestDistance = neighbor.distance;
+      for (const [nx, ny, nz] of collectSolidNeighbors(this.world.grid, x, y, z)) {
+        const neighbor = this.pendingByKey.get(cellKey(nx, ny, nz));
+        if (!neighbor) continue;
+        if (neighbor.timer < bestTimer) {
+          bestTimer = neighbor.timer;
+          bestDistance = neighbor.distance;
+        }
+      }
+
+      if (bestDistance !== Infinity) {
+        this.scheduleChunk([{
+          x,
+          y,
+          z,
+          materialId,
+          distance: bestDistance + 1,
+          timer: bestTimer + BLOCK_SUPPORT.breakDelay,
+        }]);
+        return;
       }
     }
 
-    if (bestDistance === Infinity) return;
-
-    this.scheduleChunk([{
-      x,
-      y,
-      z,
-      materialId,
-      distance: bestDistance + 1,
-      timer: bestTimer + BLOCK_SUPPORT.breakDelay,
-    }]);
+    // Stuck only to organic / floating — place ok, then peel off via cascade.
+    if (!isStructurallySupported(this.world.grid, x, y, z)) {
+      this.scheduleChunk([{
+        x,
+        y,
+        z,
+        materialId,
+        distance: 0,
+        timer: BLOCK_SUPPORT.breakDelay,
+      }]);
+    }
   }
 
   enqueueSupportJob(airX, airY, airZ) {

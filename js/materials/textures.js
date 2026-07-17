@@ -47,8 +47,9 @@ export function loadBlockTextures() {
               } else {
                 tex.wrapS = THREE.RepeatWrapping;
                 tex.wrapT = THREE.RepeatWrapping;
-                tex.magFilter = THREE.LinearFilter;
-                tex.minFilter = THREE.LinearMipmapLinearFilter;
+                tex.magFilter = THREE.NearestFilter;
+                tex.minFilter = THREE.NearestFilter;
+                tex.generateMipmaps = false;
               }
               cache.set(id, tex);
               resolve();

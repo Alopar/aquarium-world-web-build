@@ -149,6 +149,10 @@ export class DayNightSystem {
     if (lumenMat?.uniforms?.uEmissiveMul) {
       lumenMat.uniforms.uEmissiveMul.value = lerp(2.4, 1.6, t);
     }
+    const blueLumenMat = world?.meshBuilder?.threeMaterials?.get('blue_lumen');
+    if (blueLumenMat?.uniforms?.uEmissiveMul) {
+      blueLumenMat.uniforms.uEmissiveMul.value = lerp(2.0, 1.35, t);
+    }
 
     if (spaceSky?.decorEnabled && spaceSky.mesh && w > 0.35) {
       spaceSky.mesh.visible = false;

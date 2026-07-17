@@ -49,6 +49,7 @@ const WATER_FRAGMENT = /* glsl */ `
   uniform float uTime;
   uniform float uDaySkyLight;
   uniform float uMinBrightness;
+  uniform float uMaxBrightness;
 
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
@@ -135,7 +136,7 @@ const WATER_FRAGMENT = /* glsl */ `
     float underside = (gl_FrontFacing ? 0.0 : 1.0) * surfaceMix;
     waterColor = mix(waterColor, mix(uShallowColor, vec3(0.85, 0.95, 1.0), 0.55), underside * 0.75);
 
-    vec3 light = mcLightColor(vSky, combineBlockLight(vBlock, vWorldPos), uDaySkyLight, uMinBrightness);
+    vec3 light = mcLightColor(vSky, combineBlockLight(vBlock, vWorldPos, n), uDaySkyLight, uMinBrightness, uMaxBrightness);
     vec3 lit = waterColor * light;
     lit += mix(uDeepColor, uShallowColor, 0.55) * fresnel * 0.12 * light;
     lit += uShallowColor * underside * (0.35 + fresnel * 0.4) * light;
@@ -147,6 +148,7 @@ const WATER_FRAGMENT = /* glsl */ `
     alpha = clamp(alpha, 0.22, 0.95);
 
     gl_FragColor = vec4(lit, alpha);
+    gl_FragColor = linearToOutputTexel(gl_FragColor);
   }
 `;
 
@@ -188,6 +190,7 @@ const LAVA_FRAGMENT = /* glsl */ `
   uniform float uTime;
   uniform float uDaySkyLight;
   uniform float uMinBrightness;
+  uniform float uMaxBrightness;
 
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
@@ -222,13 +225,15 @@ const LAVA_FRAGMENT = /* glsl */ `
     float crack = smoothstep(0.35, 0.75, crust);
     float pulse = 0.75 + 0.25 * sin(uTime * 2.2 + glow * 6.28);
 
-    vec3 light = mcLightColor(vSky, combineBlockLight(vBlock, vWorldPos), uDaySkyLight, uMinBrightness);
+    // Emissive lava: sky dims the crust, ignore colored blocklight tint.
+    vec3 light = mcLightColor(vSky, vec3(0.0), uDaySkyLight, uMinBrightness, uMaxBrightness);
     vec3 col = mix(uColor * 0.45, uEmissive, crack * pulse);
     col += uEmissive * glow * 0.35 * (0.5 + vSurface * 0.5);
     col *= 0.85 + 0.15 * max(0.0, n.y);
     col = max(col * light, uEmissive * 0.55);
 
     gl_FragColor = vec4(col, uOpacity);
+    gl_FragColor = linearToOutputTexel(gl_FragColor);
   }
 `;
 
@@ -243,6 +248,7 @@ export function createFluidShaderMaterial(materialDef) {
   const brightUniforms = {
     uDaySkyLight: brightnessUniforms.uDaySkyLight,
     uMinBrightness: brightnessUniforms.uMinBrightness,
+    uMaxBrightness: brightnessUniforms.uMaxBrightness,
     uBrightTime: brightnessUniforms.uBrightTime,
     uBrightLerp: brightnessUniforms.uBrightLerp,
     uDynamicLight: brightnessUniforms.uDynamicLight,
@@ -265,6 +271,7 @@ export function createFluidShaderMaterial(materialDef) {
       depthWrite: false,
       side: THREE.FrontSide,
       fog: false,
+      toneMapped: false,
     });
   }
 
@@ -286,6 +293,7 @@ export function createFluidShaderMaterial(materialDef) {
     depthWrite: false,
     side: THREE.DoubleSide,
     fog: false,
+    toneMapped: false,
   });
 }
 

@@ -13,6 +13,24 @@ export const RECIPES = [
     ],
   },
   {
+    id: 'light_bomb',
+    output: 'light_bomb',
+    count: 1,
+    ingredients: [
+      { id: 'crystal', count: 1 },
+      { id: 'coal', count: 1 },
+    ],
+  },
+  {
+    id: 'signal_rocket',
+    output: 'signal_rocket',
+    count: 1,
+    ingredients: [
+      { id: 'iron', count: 1 },
+      { id: 'crystal', count: 1 },
+    ],
+  },
+  {
     id: 'pickaxe',
     output: 'pickaxe',
     count: 1,

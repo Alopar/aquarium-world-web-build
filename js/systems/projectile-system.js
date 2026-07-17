@@ -6,7 +6,7 @@ import {
   getMaterial,
   isPlaceable,
   isResourceBlock,
-  isStructuralSolid,
+  isSolid,
 } from '../materials/registry.js';
 import { getFluid, isFluidMaterial } from '../fluids/registry.js';
 import { getGas, isGasMaterial } from '../gases/registry.js';
@@ -30,7 +30,7 @@ export function isThrowableMaterial(materialId) {
   return mat.solid && mat.breakable !== false && mat.placeable !== false;
 }
 
-/** Impulse away from solid face-neighbors (attachments). */
+/** Impulse away from solid face-neighbors (including organic attachments). */
 export function collapseAwayVelocity(grid, x, y, z) {
   let dx = 0;
   let dy = 0;
@@ -41,7 +41,7 @@ export function collapseAwayVelocity(grid, x, y, z) {
     const ny = y + oy;
     const nz = z + oz;
     if (!grid.inBounds(nx, ny, nz)) continue;
-    if (!isStructuralSolid(grid.get(nx, ny, nz))) continue;
+    if (!isSolid(grid.get(nx, ny, nz))) continue;
     dx -= ox;
     dy -= oy;
     dz -= oz;
