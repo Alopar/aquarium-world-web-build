@@ -28,7 +28,9 @@ import { loadBlockTextures, disposeBlockTextures } from './materials/textures.js
 import { SpaceSky } from './systems/space-sky.js';
 import { ParticleSystem } from './systems/particle-system.js';
 import { BlockSupportSystem } from './systems/block-support.js';
+import { DetachedBlockSystem } from './systems/detached-block-system.js';
 import { TreeGrowthSystem } from './systems/tree-growth.js';
+import { TreeMeshSystem } from './systems/tree-mesh-system.js';
 import { FluidSystem } from './fluids/fluid-system.js';
 import { GasSystem } from './gases/gas-system.js';
 import { DayNightSystem } from './systems/day-night.js';
@@ -110,7 +112,9 @@ export class App {
     this.sound = null;
     this.particleSystem = null;
     this.blockSupport = null;
+    this.detachedBlocks = null;
     this.treeGrowth = null;
+    this.treeMeshes = null;
     this.fluidSystem = null;
     this.gasSystem = null;
     this.world = null;
@@ -189,11 +193,26 @@ export class App {
     await step(0.7, 'Подготовка симуляции...', () => {
       this.sound = new SoundSystem();
       this.particleSystem = new ParticleSystem(this.scene);
-      this.blockSupport = new BlockSupportSystem(this.world, this.particleSystem, this.sound);
+      this.detachedBlocks = new DetachedBlockSystem(this.scene, this.world);
+      this.world.setDetachedBlocks(this.detachedBlocks);
+      this.treeMeshes = new TreeMeshSystem(this.scene, this.world);
+      this.world.setTreeMeshes(this.treeMeshes);
+      this.treeMeshes.loadPlans(treePlans);
+      this.blockSupport = new BlockSupportSystem(
+        this.world,
+        this.particleSystem,
+        this.sound,
+        null,
+        null,
+        this.detachedBlocks,
+        this.treeMeshes,
+      );
       this.world.setBlockSupport(this.blockSupport);
       this.treeGrowth = new TreeGrowthSystem(this.world);
       this.world.setTreeGrowth(this.treeGrowth);
       this.treeGrowth.loadPlans(treePlans);
+      // Chunk meshes after tree meshSkip — trees stay out of chunk geometry.
+      this.world.rebuildMeshes();
       this.fluidSystem = new FluidSystem(this.world, {
         maxTicksPerFrame: this.quality.fluidTicksPerFrame,
       });
@@ -238,6 +257,7 @@ export class App {
         this.playerController,
         this.blockInteraction,
         this.sound,
+        this.detachedBlocks,
       );
       this.lootSystem = new LootSystem(
         this.scene,
@@ -352,6 +372,8 @@ export class App {
     this.lootSystem?.update(dt);
     this.bombSystem?.update(dt);
     this.signalRocketSystem?.update(dt);
+    // After all solid places this frame — capture every disturbed that landed.
+    this.detachedBlocks?.update(dt);
     this.world?.lighting?.tickDynamicLights(dt);
     this.spaceSky?.update(this.camera);
     this.dayNight?.update(dt, this.playerController, this.spaceSky, this.world?.fluidField, this.world);
@@ -394,6 +416,8 @@ export class App {
     this.orientationGate?.dispose();
     this.blockInteraction?.dispose();
     this.blockSupport?.dispose();
+    this.detachedBlocks?.dispose();
+    this.treeMeshes?.dispose();
     this.treeGrowth?.dispose();
     this.projectileSystem?.dispose();
     this.lootSystem?.dispose();

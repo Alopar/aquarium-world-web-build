@@ -68,51 +68,29 @@ export function isStructurallySupported(grid, x, y, z) {
 }
 
 /**
- * True if removing (rx,ry,rz) cannot cut support paths:
- * 0–1 solid neighbors, or all face-neighbors stay linked inside the 3×3×3 around the hole.
+ * Cheap support probe: continuous structural column down to y=0 in the same (x,z).
+ * True ⇒ definitely supported. False ⇒ might still be supported sideways (needs full BFS).
+ */
+export function hasVerticalColumnSupport(grid, x, y, z) {
+  if (!grid.inBounds(x, y, z)) return false;
+  for (let cy = y; cy >= 0; cy--) {
+    if (!isStructuralSolid(grid.get(x, cy, z))) return false;
+  }
+  return true;
+}
+
+/**
+ * True if removing (rx,ry,rz) cannot leave unsupported face-neighbors:
+ * every remaining solid neighbor still has a vertical column to the floor.
+ * Sideways-only support returns false so a full floor BFS runs.
  */
 export function maySkipSupportCheck(grid, rx, ry, rz) {
   const neighbors = collectSolidNeighbors(grid, rx, ry, rz);
-  if (neighbors.length <= 1) return true;
+  if (neighbors.length === 0) return true;
 
-  const start = neighbors[0];
-  const visited = new Set([cellKey(start[0], start[1], start[2])]);
-  const queue = [start];
-  let head = 0;
-
-  const minX = rx - 1;
-  const maxX = rx + 1;
-  const minY = ry - 1;
-  const maxY = ry + 1;
-  const minZ = rz - 1;
-  const maxZ = rz + 1;
-
-  while (head < queue.length) {
-    const [x, y, z] = queue[head++];
-
-    for (const [dx, dy, dz] of NEIGHBORS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      const nz = z + dz;
-
-      if (nx === rx && ny === ry && nz === rz) continue;
-      if (nx < minX || nx > maxX || ny < minY || ny > maxY || nz < minZ || nz > maxZ) continue;
-      if (!grid.inBounds(nx, ny, nz)) continue;
-      if (!isStructuralSolid(grid.get(nx, ny, nz))) continue;
-
-      const key = cellKey(nx, ny, nz);
-      if (visited.has(key)) continue;
-
-      visited.add(key);
-      queue.push([nx, ny, nz]);
-    }
+  for (const [nx, ny, nz] of neighbors) {
+    if (!hasVerticalColumnSupport(grid, nx, ny, nz)) return false;
   }
-
-  for (let i = 1; i < neighbors.length; i++) {
-    const [nx, ny, nz] = neighbors[i];
-    if (!visited.has(cellKey(nx, ny, nz))) return false;
-  }
-
   return true;
 }
 
@@ -203,11 +181,13 @@ export function collectFloatingChunk(grid, supported, seeds) {
   return chunk;
 }
 
-function createSupportJob(airX, airY, airZ, revision) {
+function createSupportJob(airX, airY, airZ, revision, seeds = null) {
   return {
     airX,
     airY,
     airZ,
+    /** Optional explicit floating seeds (blast rim); otherwise neighbors of air cell. */
+    seeds,
     revision,
     phase: 'seed',
     seedX: 0,
@@ -229,25 +209,60 @@ function resetSupportJob(job, revision) {
 }
 
 export class BlockSupportSystem {
-  constructor(world, particleSystem, sound = null, projectileSystem = null, lootSystem = null) {
+  constructor(
+    world,
+    particleSystem,
+    sound = null,
+    projectileSystem = null,
+    lootSystem = null,
+    detachedBlocks = null,
+    treeMeshes = null,
+  ) {
     this.world = world;
     this.particleSystem = particleSystem;
     this.sound = sound;
     this.projectileSystem = projectileSystem;
     this.lootSystem = lootSystem;
+    this.detachedBlocks = detachedBlocks;
+    this.treeMeshes = treeMeshes;
     this.pending = [];
     this.pendingByKey = new Map();
     this.jobs = [];
     this.worldRevision = 0;
+    /** Flat [x,y,z, ...] structural cells destroyed during a blast batch. */
+    this._blastDestroyed = [];
   }
 
   bumpWorldRevision() {
     this.worldRevision++;
   }
 
+  cancelPendingAt(x, y, z) {
+    const key = cellKey(x, y, z);
+    const entry = this.pendingByKey.get(key);
+    if (!entry) {
+      this.detachedBlocks?.cancelAt(x, y, z);
+      return;
+    }
+
+    this.pendingByKey.delete(key);
+    const idx = this.pending.indexOf(entry);
+    if (idx !== -1) this.pending.splice(idx, 1);
+    this.detachedBlocks?.cancelAt(x, y, z);
+  }
+
   onBlockRemoved(x, y, z, source) {
     // Doomed cascade chunks do not re-check support.
     if (source === 'collapse') return;
+
+    // Dig / bomb / etc. while a cell was cascade-pending or disturbed overlay.
+    this.cancelPendingAt(x, y, z);
+
+    // Blast defers to onBlastFinished — one rim check instead of N floor BFS jobs.
+    if (source === 'blast') {
+      this._blastDestroyed.push(x, y, z);
+      return;
+    }
 
     if (maySkipSupportCheck(this.world.grid, x, y, z)) return;
 
@@ -255,9 +270,48 @@ export class BlockSupportSystem {
     this.enqueueSupportJob(x, y, z);
   }
 
+  /**
+   * After a multi-block blast: rim solids adjacent to destroyed cells.
+   * Vertical-column precheck culls grounded edges; suspicious ones seed one support job.
+   * @param {number[]} destroyed flat [x,y,z, ...] from blast removals (optional; uses buffer)
+   */
+  onBlastFinished() {
+    const destroyed = this._blastDestroyed;
+    if (destroyed.length === 0) return;
+    this._blastDestroyed = [];
+
+    const { grid } = this.world;
+    const rim = new Map();
+
+    for (let i = 0; i < destroyed.length; i += 3) {
+      const x = destroyed[i];
+      const y = destroyed[i + 1];
+      const z = destroyed[i + 2];
+      for (const [nx, ny, nz] of collectSolidNeighbors(grid, x, y, z)) {
+        rim.set(cellKey(nx, ny, nz), [nx, ny, nz]);
+      }
+    }
+
+    if (rim.size === 0) return;
+
+    const suspicious = [];
+    for (const pos of rim.values()) {
+      if (hasVerticalColumnSupport(grid, pos[0], pos[1], pos[2])) continue;
+      suspicious.push(pos);
+    }
+
+    if (suspicious.length === 0) return;
+
+    this.bumpWorldRevision();
+    const [sx, sy, sz] = suspicious[0];
+    this.jobs.push(createSupportJob(sx, sy, sz, this.worldRevision, suspicious));
+  }
+
   /** After chopping organic: cascade-destroy unrooted wood/organic. */
   onOrganicRemoved(x, y, z, source) {
     if (source === 'collapse') return;
+
+    this.cancelPendingAt(x, y, z);
 
     const { grid } = this.world;
     const seen = new Set();
@@ -316,7 +370,7 @@ export class BlockSupportSystem {
           materialId,
           distance: bestDistance + 1,
           timer: bestTimer + BLOCK_SUPPORT.breakDelay,
-        }]);
+        }], { remesh: false });
         return;
       }
     }
@@ -330,7 +384,7 @@ export class BlockSupportSystem {
         materialId,
         distance: 0,
         timer: BLOCK_SUPPORT.breakDelay,
-      }]);
+      }], { remesh: false });
     }
   }
 
@@ -394,7 +448,7 @@ export class BlockSupportSystem {
 
   finishSupportJob(job) {
     const { grid } = this.world;
-    const seeds = collectSolidNeighbors(grid, job.airX, job.airY, job.airZ);
+    const seeds = job.seeds ?? collectSolidNeighbors(grid, job.airX, job.airY, job.airZ);
     const chunk = collectFloatingChunk(grid, job.supported, seeds);
     if (chunk.length === 0) return;
     this.scheduleChunk(chunk);
@@ -419,7 +473,9 @@ export class BlockSupportSystem {
     }
   }
 
-  scheduleChunk(chunk) {
+  scheduleChunk(chunk, { remesh = true } = {}) {
+    const newly = [];
+
     for (const block of chunk) {
       const key = cellKey(block.x, block.y, block.z);
       if (this.pendingByKey.has(key)) continue;
@@ -436,6 +492,15 @@ export class BlockSupportSystem {
 
       this.pendingByKey.set(key, entry);
       this.pending.push(entry);
+      newly.push(entry);
+    }
+
+    if (newly.length > 0) {
+      // Tree cells already have per-block overlays — skip detach + chunk remesh.
+      const forDetach = newly.filter((b) => !this.treeMeshes?.owns(b.x, b.y, b.z));
+      if (forDetach.length > 0) {
+        this.detachedBlocks?.detachPendingMany(forDetach, { remesh });
+      }
     }
   }
 
@@ -445,9 +510,22 @@ export class BlockSupportSystem {
 
     this.pendingByKey.delete(key);
 
-    if (this.world.getBlock(x, y, z) !== materialId) return;
+    if (this.world.getBlock(x, y, z) !== materialId) {
+      this.treeMeshes?.removeCell(x, y, z);
+      this.detachedBlocks?.cancelAt(x, y, z);
+      return;
+    }
 
-    if (!this.world.setBlock(x, y, z, 'air', { source: 'collapse' })) return;
+    // Mesh already pulled out at schedule time — clear overlay without remeshing chunks.
+    // Tree cells are owned by TreeMeshSystem (cleared in setBlock → onOrganicRemoved).
+    if (!this.treeMeshes?.owns(x, y, z)) {
+      this.detachedBlocks?.takeMesh(x, y, z, { dispose: true });
+    }
+
+    if (!this.world.setBlock(x, y, z, 'air', { source: 'collapse', skipMesh: true })) {
+      this.detachedBlocks?.placeDisturbed(x, y, z, materialId);
+      return;
+    }
 
     this.sound?.playBlockBreak(materialId);
 
@@ -496,16 +574,26 @@ export class BlockSupportSystem {
       entry.timer -= dt;
     }
 
-    while (true) {
-      const idx = this.findReadyIndex();
-      if (idx === -1) break;
-      this.collapseBlock(this.pending.splice(idx, 1)[0]);
+    // Batch lighting for all collapses this frame; chunk meshes stay untouched (skipMesh).
+    this.world.beginEditBatch();
+    try {
+      while (true) {
+        const idx = this.findReadyIndex();
+        if (idx === -1) break;
+        this.collapseBlock(this.pending.splice(idx, 1)[0]);
+      }
+    } finally {
+      this.world.endEditBatch();
     }
   }
 
   dispose() {
+    for (const entry of this.pending) {
+      this.detachedBlocks?.cancelAt(entry.x, entry.y, entry.z);
+    }
     this.pending = [];
     this.pendingByKey.clear();
     this.jobs = [];
+    this._blastDestroyed = [];
   }
 }

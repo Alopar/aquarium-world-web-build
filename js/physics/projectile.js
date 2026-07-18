@@ -15,7 +15,7 @@ function worldToBlock(x, y, z) {
 }
 
 export class Projectile {
-  constructor(materialId, position, velocity) {
+  constructor(materialId, position, velocity, { mesh = null } = {}) {
     this.materialId = materialId;
     this.position = position.clone();
     this.velocity = velocity.clone();
@@ -23,12 +23,17 @@ export class Projectile {
     this.alive = true;
     this.lastAirCell = null;
     this.lightId = `proj-${++_projectileLightSeq}`;
+    this._ownsMesh = !mesh;
 
-    const materialDef = getMaterial(materialId);
-    const geometry = new THREE.BoxGeometry(VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92);
-    setGeometryFullBright(geometry);
-    const meshMaterial = createVoxelBrightnessMaterial(materialDef);
-    this.mesh = new THREE.Mesh(geometry, meshMaterial);
+    if (mesh) {
+      this.mesh = mesh;
+    } else {
+      const materialDef = getMaterial(materialId);
+      const geometry = new THREE.BoxGeometry(VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92, VOXEL_SIZE * 0.92);
+      setGeometryFullBright(geometry);
+      const meshMaterial = createVoxelBrightnessMaterial(materialDef);
+      this.mesh = new THREE.Mesh(geometry, meshMaterial);
+    }
     this.syncMesh();
   }
 
@@ -90,8 +95,20 @@ export class Projectile {
     return null;
   }
 
+  /** Detach mesh without disposing — used when converting to a disturbed overlay. */
+  releaseMesh() {
+    const mesh = this.mesh;
+    this.mesh = null;
+    this._ownsMesh = false;
+    return mesh;
+  }
+
   dispose() {
-    this.mesh.geometry.dispose();
-    this.mesh.material.dispose();
+    if (!this.mesh) return;
+    if (this._ownsMesh) {
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
+    }
+    this.mesh = null;
   }
 }

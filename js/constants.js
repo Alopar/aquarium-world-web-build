@@ -327,6 +327,15 @@ export const BLOCK_SUPPORT = {
   bfsDeadlineCheckEvery: 64,
 };
 
+/**
+ * Cascade / projectile / place blocks rendered as overlays outside chunk geometry.
+ * Disturbed placements wake a sleeping collector that folds them all after collectInterval.
+ */
+export const DETACHED_BLOCKS = {
+  /** Seconds after wake before the collector folds all disturbed cells */
+  collectInterval: 1,
+};
+
 export const TREE_GROWTH = {
   /** Seconds between each new tree block */
   interval: 3,

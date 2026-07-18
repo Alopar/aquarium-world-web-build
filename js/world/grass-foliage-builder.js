@@ -9,7 +9,6 @@ import {
 } from '../constants.js';
 import { getMaterial } from '../materials/registry.js';
 import { createFoliageMaterial, updateGrassShaderTime } from '../shaders/grass-material.js';
-import { sampleFaceBrightnessBlend } from '../lighting/brightness-sampling.js';
 
 function chunkKey(cx, cy, cz) {
   return `${cx},${cy},${cz}`;
@@ -95,25 +94,7 @@ function foliageTint(x, y, z, salt) {
   return white.clone().lerp(subtle, t * 0.12);
 }
 
-function foliageLight(x, y, z, lighting, blend) {
-  if (!lighting) {
-    return {
-      sky: 1,
-      blockR: 0,
-      blockG: 0,
-      blockB: 0,
-      prevSky: 1,
-      prevBlockR: 0,
-      prevBlockG: 0,
-      prevBlockB: 0,
-      blendStart: -1e6,
-    };
-  }
-  // Same as top face of the grass block in mesh-builder.
-  return sampleFaceBrightnessBlend(lighting, blend, x, y, z, [0, 1, 0]);
-}
-
-function pushScaledInstance(list, x, y, z, i, cfg, salt, lighting = null, blend = null) {
+function pushScaledInstance(list, x, y, z, i, cfg, salt) {
   const ox = (hash01(x, i + salt, z) - 0.5) * 0.45;
   const oz = (hash01(x + 9, i + salt, z + 3) - 0.5) * 0.45;
   const yaw = hash01(x + i * 13 + salt, y, z) * Math.PI * 2;
@@ -130,7 +111,6 @@ function pushScaledInstance(list, x, y, z, i, cfg, salt, lighting = null, blend 
     scaleY,
     scaleZ: scaleXZ,
     color: foliageTint(x, y, z, salt + i),
-    ...foliageLight(x, y, z, lighting, blend),
   });
 }
 
@@ -261,26 +241,8 @@ export class GrassFoliageBuilder {
   }
 
   /** Light-field change: remesh foliage chunks in box. */
-  markLightDirtyBox(minX, minY, minZ, maxX, maxY, maxZ) {
-    if (!this.enabled) return;
-    const s = this.chunkSize;
-    const cx0 = Math.floor(minX / s);
-    const cx1 = Math.floor(maxX / s);
-    const cy0 = Math.floor(minY / s);
-    const cy1 = Math.floor(maxY / s);
-    const cz0 = Math.floor(minZ / s);
-    const cz1 = Math.floor(maxZ / s);
-
-    for (let cx = cx0; cx <= cx1; cx++) {
-      for (let cy = cy0; cy <= cy1; cy++) {
-        for (let cz = cz0; cz <= cz1; cz++) {
-          this.markChunkDirty(cx, cy, cz);
-        }
-      }
-    }
-
-    this.scheduleFlush();
-  }
+  /** Light-field change — no-op (atlas lighting). */
+  markLightDirtyBox(_minX, _minY, _minZ, _maxX, _maxY, _maxZ) {}
 
   markChunkDirty(cx, cy, cz) {
     if (cx < 0 || cy < 0 || cz < 0) return;
@@ -348,11 +310,6 @@ export class GrassFoliageBuilder {
   _applyInstances(mesh, placements) {
     const dummy = this._dummy;
     const count = placements.length;
-    const skyAttr = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
-    const blockAttr = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-    const prevSkyAttr = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
-    const prevBlockAttr = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-    const blendStartAttr = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
 
     for (let i = 0; i < count; i++) {
       const p = placements[i];
@@ -362,25 +319,10 @@ export class GrassFoliageBuilder {
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       mesh.setColorAt(i, p.color);
-      skyAttr.setX(i, p.sky);
-      blockAttr.setXYZ(i, p.blockR, p.blockG, p.blockB);
-      prevSkyAttr.setX(i, p.prevSky);
-      prevBlockAttr.setXYZ(i, p.prevBlockR, p.prevBlockG, p.prevBlockB);
-      blendStartAttr.setX(i, p.blendStart);
     }
 
-    mesh.geometry.setAttribute('aSkyLight', skyAttr);
-    mesh.geometry.setAttribute('aBlockLight', blockAttr);
-    mesh.geometry.setAttribute('aPrevSkyLight', prevSkyAttr);
-    mesh.geometry.setAttribute('aPrevBlockLight', prevBlockAttr);
-    mesh.geometry.setAttribute('aBlendStart', blendStartAttr);
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    skyAttr.needsUpdate = true;
-    blockAttr.needsUpdate = true;
-    prevSkyAttr.needsUpdate = true;
-    prevBlockAttr.needsUpdate = true;
-    blendStartAttr.needsUpdate = true;
     mesh.computeBoundingSphere();
   }
 
@@ -424,13 +366,13 @@ export class GrassFoliageBuilder {
           if (shouldPlaceGrass(x, y, z)) {
             const count = bladesForCell(x, y, z);
             for (let i = 0; i < count; i++) {
-              pushScaledInstance(grassPlacements, x, y, z, i, GRASS_FOLIAGE, 0, this.lighting, this.brightnessBlend);
+              pushScaledInstance(grassPlacements, x, y, z, i, GRASS_FOLIAGE, 0);
             }
           }
 
           if (shouldPlaceFlower(x, y, z)) {
             const type = flowerTypeForCell(x, y, z);
-            pushScaledInstance(flowerPlacements.get(type), x, y, z, 0, FLOWER_FOLIAGE, 77, this.lighting, this.brightnessBlend);
+            pushScaledInstance(flowerPlacements.get(type), x, y, z, 0, FLOWER_FOLIAGE, 77);
           }
         }
       }

@@ -7,10 +7,9 @@ function peakLevel(sky, r, g, b) {
 }
 
 /**
- * Tracks voxels whose baked light changed and exposes prev→target for
- * shader-side linear interpolation (~brightnessLerpSeconds).
+ * Tracks voxels whose light changed and exposes prev→target for
+ * atlas upload (display lerp without remesh).
  * Brightening snaps instantly; dimming lerps over brightnessLerpSeconds.
- * Blocklight prev/target are RGB channels.
  */
 export class BrightnessBlendSystem {
   /**

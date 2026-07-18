@@ -41,6 +41,8 @@ export class AquariumWorld {
     bindDynamicLightTexture(this.lighting);
     this.lighting.onAfterFlush = (box) => {
       this.brightnessBlend.captureRegion(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+      this.lighting.markStaticTextureDirty();
+      this.lighting.flushStaticTexture(this.brightnessBlend);
     };
     this.meshBuilder = new MeshBuilder(this.grid, {
       lambertTerrain: !!quality.lambertTerrain,
@@ -61,6 +63,10 @@ export class AquariumWorld {
     this.tank = null;
     this.blockSupport = null;
     this.treeGrowth = null;
+    this.treeMeshes = null;
+    this.detachedBlocks = null;
+    /** When true, solid onChange skips mesh dirty (lighting still updates). */
+    this._skipMesh = false;
     /** @type {import('../fluids/fluid-system.js').FluidSystem | null} */
     this.fluidSystem = null;
     /** @type {import('../gases/gas-system.js').GasSystem | null} */
@@ -90,22 +96,34 @@ export class AquariumWorld {
       const blockLightNeeded = emitChanged
         || (occlusionChanged && this.lighting.hasBlockLightNear(x, y, z, LIGHTING.maxLevel));
 
-      this.lighting.markDirtyAt(x, y, z, {
-        skyDecrease,
-        blockLight: blockLightNeeded,
-      });
+      let skyDec = skyDecrease;
+      let skyUpdate = true;
 
-      this.meshBuilder.markDirtyColumnsAt(x, z);
+      if (skyDec && this.lighting.canSkipSkylightDecrease(x, y, z)) {
+        // Opaque place that cannot darken neighbors — just zero this cell.
+        this.lighting.occludeSkylightCell(x, y, z);
+        skyDec = false;
+        skyUpdate = false;
+      }
+
+      if (skyUpdate || skyDec || blockLightNeeded) {
+        this.lighting.markDirtyAt(x, y, z, {
+          skyDecrease: skyDec,
+          skyUpdate: skyUpdate || skyDec,
+          blockLight: blockLightNeeded,
+        });
+      }
+
+      if (this._skipMesh) return;
+
+      // Light updates via static atlas — remesh only local geometry (no light radius).
       this.meshBuilder.markDirtyAt(x, y, z);
-      this.meshBuilder.markDirtyInRadius(x, y, z, LIGHTING.maxLevel);
 
       if (this.fluidMeshBuilder.enabled) {
         this.fluidMeshBuilder.markDirtyAt(x, y, z);
-        this.fluidMeshBuilder.markDirtyInRadius(x, y, z, LIGHTING.maxLevel);
       }
       if (this.grassFoliageBuilder.enabled) {
         this.grassFoliageBuilder.markDirtyAt(x, y, z);
-        this.grassFoliageBuilder.markDirtyInRadius(x, y, z, LIGHTING.maxLevel);
       }
 
       this.gasMeshBuilder.markDirtyAt(x, y, z);
@@ -158,11 +176,16 @@ export class AquariumWorld {
     this.grid.onChange = onChange;
     this.lighting.rebuildAll();
     this.brightnessBlend.snapAll();
+    this.lighting.uploadStaticTexture(this.brightnessBlend);
+    return treePlans;
+  }
+
+  /** Build solid / fluid / gas / foliage meshes. Call after tree meshSkip is registered. */
+  rebuildMeshes() {
     this.meshBuilder.rebuildAll();
     this.fluidMeshBuilder.rebuildAll();
     this.gasMeshBuilder.rebuildAll();
     this.grassFoliageBuilder.rebuildAll();
-    return treePlans;
   }
 
   createTank() {
@@ -173,13 +196,22 @@ export class AquariumWorld {
     this.blockSupport = system;
   }
 
+  setDetachedBlocks(system) {
+    this.detachedBlocks = system;
+  }
+
   setTreeGrowth(system) {
     this.treeGrowth = system;
+  }
+
+  setTreeMeshes(system) {
+    this.treeMeshes = system;
   }
 
   /** @param {number} dt */
   update(dt) {
     this.brightnessBlend.update(dt);
+    this.lighting.flushStaticTexture(this.brightnessBlend);
   }
 
   getFluidVolume(x, y, z) {
@@ -495,7 +527,14 @@ export class AquariumWorld {
       this.displaceGas(x, y, z);
     }
 
-    const changed = this.grid.set(x, y, z, materialId);
+    const prevSkipMesh = this._skipMesh;
+    if (options.skipMesh) this._skipMesh = true;
+    let changed = false;
+    try {
+      changed = this.grid.set(x, y, z, materialId);
+    } finally {
+      this._skipMesh = prevSkipMesh;
+    }
 
     if (!changed) {
       return false;
@@ -504,9 +543,14 @@ export class AquariumWorld {
     if (isStructuralSolid(prev) && materialId === 'air') {
       this.blockSupport?.onBlockRemoved(x, y, z, options.source);
     } else if (isOrganic(prev) && materialId === 'air') {
+      this.treeMeshes?.onOrganicRemoved(x, y, z, options.source);
       this.blockSupport?.onOrganicRemoved(x, y, z, options.source);
     } else if (isStructuralSolid(materialId) && options.source !== 'collapse') {
       this.blockSupport?.onBlockPlaced(x, y, z, materialId);
+    }
+
+    if (isOrganic(materialId) && options.source === 'tree-growth') {
+      this.treeMeshes?.onGrowthPlaced(x, y, z, materialId);
     }
 
     if ((isOrganic(prev) || prev === 'wood') && materialId === 'air' && options.source !== 'tree-growth') {

@@ -10,6 +10,7 @@ import {
   syncSkyFaceShadeToLighting,
   tickOptionValue,
 } from './quality-settings.js';
+import { syncSkyFaceShadeUniforms } from './shaders/voxel-brightness-material.js';
 
 function skyFaceShadeChanged(prev, next) {
   return next.skyFaceShadeEnabled !== prev.skyFaceShadeEnabled
@@ -19,24 +20,6 @@ function skyFaceShadeChanged(prev, next) {
     || next.skyFaceShadeWest !== prev.skyFaceShadeWest
     || next.skyFaceShadeNorth !== prev.skyFaceShadeNorth
     || next.skyFaceShadeBottom !== prev.skyFaceShadeBottom;
-}
-
-/** Refresh baked face brightness after sky-shade tweak. */
-let skyShadeRemeshTimer = 0;
-
-function refreshSkyFaceShadeMeshes(world) {
-  if (!world?.grid) return;
-  if (skyShadeRemeshTimer) clearTimeout(skyShadeRemeshTimer);
-  skyShadeRemeshTimer = setTimeout(() => {
-    skyShadeRemeshTimer = 0;
-    const { x, y, z } = world.grid.size;
-    const maxX = x - 1;
-    const maxY = y - 1;
-    const maxZ = z - 1;
-    world.meshBuilder?.markAllLightDirty?.();
-    world.fluidMeshBuilder?.markLightDirtyBox?.(0, 0, 0, maxX, maxY, maxZ);
-    world.grassFoliageBuilder?.markLightDirtyBox?.(0, 0, 0, maxX, maxY, maxZ);
-  }, 80);
 }
 
 /**
@@ -120,7 +103,8 @@ export function applyGraphicsSettings(app, patch) {
 
   if (skyFaceShadeChanged(prev, next)) {
     syncSkyFaceShadeToLighting(next);
-    refreshSkyFaceShadeMeshes(world);
+    // Sky face shade is applied in the fragment shader — no remesh.
+    syncSkyFaceShadeUniforms();
   }
 
   app.quality = next;

@@ -57,12 +57,13 @@ export function collapseAwayVelocity(grid, x, y, z) {
 }
 
 export class ProjectileSystem {
-  constructor(scene, world, playerController, blockInteraction, sound = null) {
+  constructor(scene, world, playerController, blockInteraction, sound = null, detachedBlocks = null) {
     this.scene = scene;
     this.world = world;
     this.playerController = playerController;
     this.blockInteraction = blockInteraction;
     this.sound = sound;
+    this.detachedBlocks = detachedBlocks;
     this.projectiles = [];
     this.group = new THREE.Group();
     this.group.name = 'projectiles';
@@ -81,10 +82,10 @@ export class ProjectileSystem {
    * Spawn a physical block at a world position with the given velocity.
    * @returns {boolean}
    */
-  spawn(materialId, position, velocity) {
+  spawn(materialId, position, velocity, { mesh = null } = {}) {
     if (!isThrowableMaterial(materialId)) return false;
 
-    const projectile = new Projectile(materialId, position, velocity);
+    const projectile = new Projectile(materialId, position, velocity, { mesh });
     const { x: bx, y: by, z: bz } = {
       x: Math.floor(projectile.position.x / VOXEL_SIZE),
       y: Math.floor(projectile.position.y / VOXEL_SIZE),
@@ -115,14 +116,14 @@ export class ProjectileSystem {
    * Neighbors are read after the voxel is cleared to air.
    * Resource / drop blocks are handled by LootSystem before this is called.
    */
-  spawnFromCollapse(materialId, x, y, z) {
+  spawnFromCollapse(materialId, x, y, z, { mesh = null } = {}) {
     this._spawnPos.set(
       (x + 0.5) * VOXEL_SIZE,
       (y + 0.5) * VOXEL_SIZE,
       (z + 0.5) * VOXEL_SIZE,
     );
     this._spawnVel.copy(collapseAwayVelocity(this.world.grid, x, y, z));
-    return this.spawn(materialId, this._spawnPos, this._spawnVel);
+    return this.spawn(materialId, this._spawnPos, this._spawnVel, { mesh });
   }
 
   canPlaceAt(x, y, z) {
@@ -137,11 +138,29 @@ export class ProjectileSystem {
     return true;
   }
 
-  placeProjectile(materialId, cell) {
-    if (!cell) return false;
-    if (!isPlaceable(materialId)) return false;
+  placeProjectile(materialId, cell, { mesh = null } = {}) {
+    if (!cell) {
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+      return false;
+    }
+    if (!isPlaceable(materialId)) {
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+      return false;
+    }
     const { x, y, z } = cell;
-    if (!this.canPlaceAt(x, y, z)) return false;
+    if (!this.canPlaceAt(x, y, z)) {
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+      return false;
+    }
 
     const fluid = getFluid(materialId);
     const gas = getGas(materialId);
@@ -158,6 +177,10 @@ export class ProjectileSystem {
       } else {
         placed = this.world.setFluid(x, y, z, materialId, fluid.maxVolume);
       }
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
     } else if (gas) {
       const existing = getGas(this.world.getBlock(x, y, z));
       if (existing && existing.id === gas.id) {
@@ -169,8 +192,24 @@ export class ProjectileSystem {
       } else {
         placed = this.world.setGas(x, y, z, materialId, gas.maxVolume);
       }
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
     } else {
-      placed = this.world.setBlock(x, y, z, materialId);
+      // Skip chunk remesh — light updates immediately; mesh settles via disturbed collect.
+      placed = this.world.setBlock(x, y, z, materialId, { skipMesh: true });
+      if (placed) {
+        const key = `${x},${y},${z}`;
+        const pending = this.world.blockSupport?.pendingByKey?.has(key);
+        if (!pending) {
+          this.detachedBlocks?.placeDisturbed(x, y, z, materialId);
+        }
+      }
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
     }
 
     if (placed) {
@@ -193,12 +232,14 @@ export class ProjectileSystem {
 
       lighting.removeDynamicLight(projectile.lightId);
 
-      const placed = this.placeProjectile(projectile.materialId, result.cell);
+      const mesh = projectile.releaseMesh();
+      if (mesh) this.group.remove(mesh);
+
+      const placed = this.placeProjectile(projectile.materialId, result.cell, { mesh });
       if (!placed) {
         this.blockInteraction?.addToInventory(projectile.materialId, 1, { allowFluid: true });
       }
 
-      this.group.remove(projectile.mesh);
       projectile.dispose();
       this.projectiles.splice(i, 1);
     }
@@ -220,7 +261,8 @@ export class ProjectileSystem {
   dispose() {
     for (const projectile of this.projectiles) {
       this.world.lighting.removeDynamicLight(projectile.lightId);
-      this.group.remove(projectile.mesh);
+      if (projectile.mesh) this.group.remove(projectile.mesh);
+      projectile._ownsMesh = true;
       projectile.dispose();
     }
     this.projectiles = [];

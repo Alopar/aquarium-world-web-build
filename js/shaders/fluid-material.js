@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import {
   brightnessUniforms,
   BRIGHTNESS_GLSL,
-  BRIGHTNESS_BLEND_GLSL,
   DYNAMIC_LIGHT_GLSL,
 } from './voxel-brightness-material.js';
 
@@ -10,23 +9,12 @@ import {
 export const fluidTimeUniform = { value: 0 };
 
 const WATER_VERTEX = /* glsl */ `
-  attribute vec3 color;
-  attribute float aSky;
-  attribute vec3 aPrevBlock;
-  attribute float aPrevSky;
-  attribute float aBlendStart;
-  uniform float uBrightTime;
-  uniform float uBrightLerp;
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying vec3 vViewDir;
   varying float vSurface;
-  varying float vSky;
-  varying vec3 vBlock;
 
   attribute float aSurface;
-
-  ${BRIGHTNESS_BLEND_GLSL}
 
   void main() {
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
@@ -34,10 +22,6 @@ const WATER_VERTEX = /* glsl */ `
     vNormalW = normalize(mat3(modelMatrix) * normal);
     vSurface = aSurface;
     vViewDir = cameraPosition - worldPos.xyz;
-    blendFaceLight(
-      aSky, color, aPrevSky, aPrevBlock, aBlendStart,
-      uBrightTime, uBrightLerp, vSky, vBlock
-    );
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
@@ -55,8 +39,6 @@ const WATER_FRAGMENT = /* glsl */ `
   varying vec3 vNormalW;
   varying vec3 vViewDir;
   varying float vSurface;
-  varying float vSky;
-  varying vec3 vBlock;
 
   ${BRIGHTNESS_GLSL}
   ${DYNAMIC_LIGHT_GLSL}
@@ -136,7 +118,10 @@ const WATER_FRAGMENT = /* glsl */ `
     float underside = (gl_FrontFacing ? 0.0 : 1.0) * surfaceMix;
     waterColor = mix(waterColor, mix(uShallowColor, vec3(0.85, 0.95, 1.0), 0.55), underside * 0.75);
 
-    vec3 light = mcLightColor(vSky, combineBlockLight(vBlock, vWorldPos, n), uDaySkyLight, uMinBrightness, uMaxBrightness);
+    vec3 staticBlock = sampleStaticLight(vWorldPos, n).rgb;
+    vec3 block = combineBlockLight(staticBlock, vWorldPos, n);
+    float sky = sampleSkyLight(0.0, vWorldPos, n, staticBlock);
+    vec3 light = mcLightColor(sky, block, uDaySkyLight, uMinBrightness, uMaxBrightness);
     vec3 lit = waterColor * light;
     lit += mix(uDeepColor, uShallowColor, 0.55) * fresnel * 0.12 * light;
     lit += uShallowColor * underside * (0.35 + fresnel * 0.4) * light;
@@ -153,32 +138,17 @@ const WATER_FRAGMENT = /* glsl */ `
 `;
 
 const LAVA_VERTEX = /* glsl */ `
-  attribute vec3 color;
-  attribute float aSky;
-  attribute vec3 aPrevBlock;
-  attribute float aPrevSky;
-  attribute float aBlendStart;
-  uniform float uBrightTime;
-  uniform float uBrightLerp;
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying float vSurface;
-  varying float vSky;
-  varying vec3 vBlock;
 
   attribute float aSurface;
-
-  ${BRIGHTNESS_BLEND_GLSL}
 
   void main() {
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
     vWorldPos = worldPos.xyz;
     vNormalW = normalize(mat3(modelMatrix) * normal);
     vSurface = aSurface;
-    blendFaceLight(
-      aSky, color, aPrevSky, aPrevBlock, aBlendStart,
-      uBrightTime, uBrightLerp, vSky, vBlock
-    );
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
@@ -195,8 +165,6 @@ const LAVA_FRAGMENT = /* glsl */ `
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying float vSurface;
-  varying float vSky;
-  varying vec3 vBlock;
 
   ${BRIGHTNESS_GLSL}
   ${DYNAMIC_LIGHT_GLSL}
@@ -226,7 +194,9 @@ const LAVA_FRAGMENT = /* glsl */ `
     float pulse = 0.75 + 0.25 * sin(uTime * 2.2 + glow * 6.28);
 
     // Emissive lava: sky dims the crust, ignore colored blocklight tint.
-    vec3 light = mcLightColor(vSky, vec3(0.0), uDaySkyLight, uMinBrightness, uMaxBrightness);
+    vec3 staticBlock = sampleStaticLight(vWorldPos, n).rgb;
+    float sky = sampleSkyLight(0.0, vWorldPos, n, staticBlock);
+    vec3 light = mcLightColor(sky, vec3(0.0), uDaySkyLight, uMinBrightness, uMaxBrightness);
     vec3 col = mix(uColor * 0.45, uEmissive, crack * pulse);
     col += uEmissive * glow * 0.35 * (0.5 + vSurface * 0.5);
     col *= 0.85 + 0.15 * max(0.0, n.y);
@@ -241,20 +211,29 @@ function colorFromHex(hex) {
   return new THREE.Color(hex);
 }
 
-/**
- * Build a Three.js material for a liquid definition from the materials registry.
- */
-export function createFluidShaderMaterial(materialDef) {
-  const brightUniforms = {
+function sharedBrightUniforms() {
+  return {
     uDaySkyLight: brightnessUniforms.uDaySkyLight,
     uMinBrightness: brightnessUniforms.uMinBrightness,
     uMaxBrightness: brightnessUniforms.uMaxBrightness,
     uBrightTime: brightnessUniforms.uBrightTime,
     uBrightLerp: brightnessUniforms.uBrightLerp,
     uDynamicLight: brightnessUniforms.uDynamicLight,
+    uStaticLight: brightnessUniforms.uStaticLight,
     uWorldSize: brightnessUniforms.uWorldSize,
     uUseDynamicLight: brightnessUniforms.uUseDynamicLight,
+    uUseStaticLight: brightnessUniforms.uUseStaticLight,
+    uSkyShadeEn: brightnessUniforms.uSkyShadeEn,
+    uSkyShadePos: brightnessUniforms.uSkyShadePos,
+    uSkyShadeNeg: brightnessUniforms.uSkyShadeNeg,
   };
+}
+
+/**
+ * Build a Three.js material for a liquid definition from the materials registry.
+ */
+export function createFluidShaderMaterial(materialDef) {
+  const brightUniforms = sharedBrightUniforms();
 
   if (materialDef.emissive != null) {
     return new THREE.ShaderMaterial({

@@ -193,7 +193,10 @@ export class TreeGrowthSystem {
       if (!isGrowthAllowed(grid, tree, nextIndex)) continue;
 
       if (canPlaceGrowthBlock(grid, block)) {
-        this.world.setBlock(block.x, block.y, block.z, block.materialId, { source: 'tree-growth' });
+        this.world.setBlock(block.x, block.y, block.z, block.materialId, {
+          source: 'tree-growth',
+          skipMesh: true,
+        });
       }
 
       tree.nextIndex++;

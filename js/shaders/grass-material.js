@@ -3,39 +3,23 @@ import { getBlockTexture } from '../materials/textures.js';
 import {
   brightnessUniforms,
   BRIGHTNESS_GLSL,
-  BRIGHTNESS_BLEND_GLSL,
   DYNAMIC_LIGHT_GLSL,
 } from './voxel-brightness-material.js';
 
 export const grassTimeUniform = { value: 0 };
 
 const FOLIAGE_VERTEX = /* glsl */ `
-  attribute float aSkyLight;
-  attribute vec3 aBlockLight;
-  attribute float aPrevSkyLight;
-  attribute vec3 aPrevBlockLight;
-  attribute float aBlendStart;
   varying vec2 vUv;
-  varying float vSky;
-  varying vec3 vBlock;
   varying vec3 vTint;
   varying vec3 vWorldPos;
   varying vec3 vWorldNormal;
 
   uniform float uTime;
-  uniform float uBrightTime;
-  uniform float uBrightLerp;
   uniform float uWindStrength;
   uniform float uBladeHeight;
 
-  ${BRIGHTNESS_BLEND_GLSL}
-
   void main() {
     vUv = uv;
-    blendFaceLight(
-      aSkyLight, aBlockLight, aPrevSkyLight, aPrevBlockLight, aBlendStart,
-      uBrightTime, uBrightLerp, vSky, vBlock
-    );
     vTint = instanceColor.rgb;
 
     vec3 transformed = position;
@@ -61,8 +45,6 @@ const FOLIAGE_FRAGMENT = /* glsl */ `
   uniform float uMinBrightness;
   uniform float uMaxBrightness;
   varying vec2 vUv;
-  varying float vSky;
-  varying vec3 vBlock;
   varying vec3 vTint;
   varying vec3 vWorldPos;
   varying vec3 vWorldNormal;
@@ -74,8 +56,10 @@ const FOLIAGE_FRAGMENT = /* glsl */ `
     vec4 tex = texture2D(uMap, vUv);
     if (tex.a < uAlphaTest) discard;
 
-    vec3 block = combineBlockLight(vBlock, vWorldPos, vWorldNormal);
-    vec3 light = mcLightColor(vSky, block, uDaySkyLight, uMinBrightness, uMaxBrightness);
+    vec3 staticBlock = sampleStaticLight(vWorldPos, vWorldNormal).rgb;
+    vec3 block = combineBlockLight(staticBlock, vWorldPos, vWorldNormal);
+    float sky = sampleSkyLight(0.0, vWorldPos, vWorldNormal, staticBlock);
+    vec3 light = mcLightColor(sky, block, uDaySkyLight, uMinBrightness, uMaxBrightness);
     vec3 albedo = tex.rgb * vTint;
     gl_FragColor = vec4(albedo * light, 1.0);
     gl_FragColor = linearToOutputTexel(gl_FragColor);
@@ -83,7 +67,7 @@ const FOLIAGE_FRAGMENT = /* glsl */ `
 `;
 
 /**
- * Foliage: texture + alpha test + MC brightness from instanced light attrs.
+ * Foliage: texture + alpha test + MC brightness from static/dynamic light atlases.
  */
 export function createFoliageMaterial(textureId, windStrength = 0.05, bladeHeight = 0.28) {
   const map = getBlockTexture(textureId);
@@ -100,8 +84,13 @@ export function createFoliageMaterial(textureId, windStrength = 0.05, bladeHeigh
       uBrightTime: brightnessUniforms.uBrightTime,
       uBrightLerp: brightnessUniforms.uBrightLerp,
       uDynamicLight: brightnessUniforms.uDynamicLight,
+      uStaticLight: brightnessUniforms.uStaticLight,
       uWorldSize: brightnessUniforms.uWorldSize,
       uUseDynamicLight: brightnessUniforms.uUseDynamicLight,
+      uUseStaticLight: brightnessUniforms.uUseStaticLight,
+      uSkyShadeEn: brightnessUniforms.uSkyShadeEn,
+      uSkyShadePos: brightnessUniforms.uSkyShadePos,
+      uSkyShadeNeg: brightnessUniforms.uSkyShadeNeg,
     },
     vertexShader: FOLIAGE_VERTEX,
     fragmentShader: FOLIAGE_FRAGMENT,

@@ -122,6 +122,7 @@ export class BombSystem {
     );
 
     // One lighting pass for the whole blast — not per destroyed block.
+    // Support is deferred: rim check once after the sphere is carved out.
     this.world.beginEditBatch();
     try {
       for (let dx = -r; dx <= r; dx++) {
@@ -137,7 +138,7 @@ export class BombSystem {
             const materialId = this.world.getBlock(x, y, z);
             if (!isBreakable(materialId)) continue;
 
-            if (this.world.setBlock(x, y, z, 'air')) {
+            if (this.world.setBlock(x, y, z, 'air', { source: 'blast' })) {
               this.particleSystem?.spawnBlockBreak(x, y, z, materialId);
               if (isResourceBlock(materialId) || hasDrops(materialId)) {
                 this.lootSystem?.spawnBurst(materialId, x, y, z);
@@ -150,6 +151,7 @@ export class BombSystem {
       this.world.endEditBatch();
     }
 
+    this.world.blockSupport?.onBlastFinished();
     this.damagePlayer(worldX, worldY, worldZ);
   }
 

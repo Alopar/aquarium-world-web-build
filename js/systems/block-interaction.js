@@ -242,7 +242,13 @@ export class BlockInteraction {
     } else if (gas) {
       placed = this.world.setGas(x, y, z, materialId, gas.maxVolume);
     } else {
-      placed = this.world.setBlock(x, y, z, materialId);
+      placed = this.world.setBlock(x, y, z, materialId, { skipMesh: true });
+      if (placed) {
+        const key = `${x},${y},${z}`;
+        if (!this.world.blockSupport?.pendingByKey?.has(key)) {
+          this.world.detachedBlocks?.placeDisturbed(x, y, z, materialId);
+        }
+      }
     }
 
     if (placed) {

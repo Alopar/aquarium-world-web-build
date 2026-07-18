@@ -57,7 +57,8 @@ function attenuateRgb(r, g, b, falloff) {
  * Voxel lighting — three channels:
  *   skylight (scalar) | blockLight RGB (static emitters) | dynamicLight RGB (transient)
  * Display / gameplay sample = max(block, dynamic).
- * Meshes bake only static block + sky; dynamic is sampled from a 3D texture in shaders.
+ * Both static (sky+block) and dynamic are sampled from 2D atlas textures in shaders —
+ * mesh remesh is only needed for geometry, never for light radius.
  */
 export class VoxelLightingSystem {
   /**
@@ -73,7 +74,7 @@ export class VoxelLightingSystem {
 
     this.skylight = new Uint8Array(this.volume);
 
-    /** Static block emitters (baked into mesh attributes). */
+    /** Static block emitters (CPU field + atlas; not baked into meshes). */
     this.blockLight = new Uint8Array(this.volume);
     this.blockLightR = new Uint8Array(this.volume);
     this.blockLightG = new Uint8Array(this.volume);
@@ -90,12 +91,21 @@ export class VoxelLightingSystem {
     this._dynLitFlag = new Uint8Array(this.volume);
 
     this._skyQueue = [];
+    this._skyDecreaseQueue = [];
     this._blockQueue = [];
     this._dynQueue = [];
 
     /** @type {number[]} packed x,y,z,flags */
     this._pending = [];
     this._batchDepth = 0;
+    /** Tight dirty bounds from the last sky/block update (for atlas blend). */
+    this._dirtyMinX = 0;
+    this._dirtyMinY = 0;
+    this._dirtyMinZ = 0;
+    this._dirtyMaxX = 0;
+    this._dirtyMaxY = 0;
+    this._dirtyMaxZ = 0;
+    this._hasDirtyBounds = false;
 
     /** @type {Map<string, object>} */
     this._dynamicSources = new Map();
@@ -103,6 +113,7 @@ export class VoxelLightingSystem {
     this._dynSourcesDirty = false;
     this._decayAcc = 0;
     this._texDirty = false;
+    this._staticTexDirty = true;
 
     // RGBA atlas: width = sizeX * sizeZ, height = sizeY (row = y, col = x + z*sizeX)
     this._texW = x * z;
@@ -122,6 +133,23 @@ export class VoxelLightingSystem {
     this.dynamicTexture.flipY = false;
     this.dynamicTexture.generateMipmaps = false;
     this.dynamicTexture.needsUpdate = true;
+
+    /** Static atlas: RGB = block light, A = skylight (0…255 ↔ 0…maxLevel). */
+    this._staticTexData = new Uint8Array(this._texW * this._texH * 4);
+    this.staticTexture = new THREE.DataTexture(
+      this._staticTexData,
+      this._texW,
+      this._texH,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    this.staticTexture.minFilter = THREE.NearestFilter;
+    this.staticTexture.magFilter = THREE.NearestFilter;
+    this.staticTexture.wrapS = THREE.ClampToEdgeWrapping;
+    this.staticTexture.wrapT = THREE.ClampToEdgeWrapping;
+    this.staticTexture.flipY = false;
+    this.staticTexture.generateMipmaps = false;
+    this.staticTexture.needsUpdate = true;
 
     /** @type {null | ((box: object) => void)} */
     this.onAfterFlush = null;
@@ -264,6 +292,43 @@ export class VoxelLightingSystem {
     };
   }
 
+  /**
+   * True when placing an opaque block at (x,y,z) cannot darken any neighbor.
+   * Reads the CURRENT skylight field (still pre-update values when called from onChange).
+   */
+  canSkipSkylightDecrease(x, y, z) {
+    if (!this.grid.inBounds(x, y, z)) return true;
+    const oldSky = this.skylight[this._index(x, y, z)];
+    if (oldSky <= 0) return true;
+
+    for (const [dx, dy, dz] of FACE_DIRS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const nz = z + dz;
+      if (!this.grid.inBounds(nx, ny, nz)) continue;
+      if (blocksSkylight(this.grid.get(nx, ny, nz))) continue;
+      if (this.skylight[this._index(nx, ny, nz)] < oldSky) return false;
+    }
+    return true;
+  }
+
+  /** Zero skylight in an opaque cell without a flood (after canSkipSkylightDecrease). */
+  occludeSkylightCell(x, y, z) {
+    if (!this.grid.inBounds(x, y, z)) return;
+    const idx = this._index(x, y, z);
+    if (this.skylight[idx] === 0) return;
+    this.skylight[idx] = 0;
+    this._staticTexDirty = true;
+    this.onAfterFlush?.({
+      minX: x,
+      minY: y,
+      minZ: z,
+      maxX: x,
+      maxY: y,
+      maxZ: z,
+    });
+  }
+
   beginBatch() {
     this._batchDepth++;
   }
@@ -273,12 +338,62 @@ export class VoxelLightingSystem {
     if (this._batchDepth === 0) this.flushPending();
   }
 
-  markDirtyAt(x, y, z, { skyDecrease = false, blockLight = true } = {}) {
+  /**
+   * @param {{ skyDecrease?: boolean, skyUpdate?: boolean, blockLight?: boolean }} [opts]
+   * skyUpdate=false skips skylight entirely (blockLight may still run).
+   */
+  markDirtyAt(x, y, z, { skyDecrease = false, skyUpdate = true, blockLight = true } = {}) {
+    if (!skyUpdate && !skyDecrease && !blockLight) return;
     let flags = 0;
     if (skyDecrease) flags |= 1;
     if (blockLight) flags |= 2;
+    if (skyUpdate || skyDecrease) flags |= 4;
     this._pending.push(x, y, z, flags);
     if (this._batchDepth === 0) this.flushPending();
+  }
+
+  _resetDirtyBounds() {
+    this._hasDirtyBounds = false;
+  }
+
+  _expandDirty(x, y, z) {
+    if (!this._hasDirtyBounds) {
+      this._dirtyMinX = x;
+      this._dirtyMinY = y;
+      this._dirtyMinZ = z;
+      this._dirtyMaxX = x;
+      this._dirtyMaxY = y;
+      this._dirtyMaxZ = z;
+      this._hasDirtyBounds = true;
+      return;
+    }
+    if (x < this._dirtyMinX) this._dirtyMinX = x;
+    if (y < this._dirtyMinY) this._dirtyMinY = y;
+    if (z < this._dirtyMinZ) this._dirtyMinZ = z;
+    if (x > this._dirtyMaxX) this._dirtyMaxX = x;
+    if (y > this._dirtyMaxY) this._dirtyMaxY = y;
+    if (z > this._dirtyMaxZ) this._dirtyMaxZ = z;
+  }
+
+  _dirtyBox(pad = 0) {
+    if (!this._hasDirtyBounds) {
+      return {
+        minX: 0,
+        minY: 0,
+        minZ: 0,
+        maxX: this.sizeX - 1,
+        maxY: this.sizeY - 1,
+        maxZ: this.sizeZ - 1,
+      };
+    }
+    return {
+      minX: Math.max(0, this._dirtyMinX - pad),
+      minY: Math.max(0, this._dirtyMinY - pad),
+      minZ: Math.max(0, this._dirtyMinZ - pad),
+      maxX: Math.min(this.sizeX - 1, this._dirtyMaxX + pad),
+      maxY: Math.min(this.sizeY - 1, this._dirtyMaxY + pad),
+      maxZ: Math.min(this.sizeZ - 1, this._dirtyMaxZ + pad),
+    };
   }
 
   flushPending() {
@@ -292,7 +407,10 @@ export class VoxelLightingSystem {
     let maxY = -Infinity;
     let maxZ = -Infinity;
     let anySkyDecrease = false;
+    let anySkyUpdate = false;
     let anyBlock = false;
+    /** @type {number[]} */
+    const decreaseEdits = [];
 
     for (let i = 0; i < p.length; i += 4) {
       const x = p[i];
@@ -305,31 +423,34 @@ export class VoxelLightingSystem {
       if (x > maxX) maxX = x;
       if (y > maxY) maxY = y;
       if (z > maxZ) maxZ = z;
-      if (flags & 1) anySkyDecrease = true;
+      if (flags & 1) {
+        anySkyDecrease = true;
+        decreaseEdits.push(x, y, z);
+      }
       if (flags & 2) anyBlock = true;
+      if (flags & 4) anySkyUpdate = true;
     }
     p.length = 0;
 
-    const r = LIGHTING.maxLevel;
+    this._resetDirtyBounds();
+    this._expandDirty(minX, minY, minZ);
+    this._expandDirty(maxX, maxY, maxZ);
 
     if (anySkyDecrease) {
-      this._rebuildSkylightBox(minX - r, minY - r, minZ - r, maxX + r, maxY + r, maxZ + r);
-    } else {
+      this._skylightDecreaseFromEdits(decreaseEdits);
+    } else if (anySkyUpdate) {
       this._skylightIncreaseFromEdits(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     if (anyBlock) {
+      const r = LIGHTING.maxLevel;
       this._rebuildBlockLightBox(minX - r, minY - r, minZ - r, maxX + r, maxY + r, maxZ + r);
+      this._expandDirty(minX - r, minY - r, minZ - r);
+      this._expandDirty(maxX + r, maxY + r, maxZ + r);
     }
 
-    this.onAfterFlush?.({
-      minX: minX - r,
-      minY: minY - r,
-      minZ: minZ - r,
-      maxX: maxX + r,
-      maxY: maxY + r,
-      maxZ: maxZ + r,
-    });
+    this._staticTexDirty = true;
+    this.onAfterFlush?.(this._dirtyBox(0));
   }
 
   rebuildAll() {
@@ -348,6 +469,83 @@ export class VoxelLightingSystem {
     }
     this._propagateSkylightFromAllLit();
     this._rebuildBlockLightBox(0, 0, 0, this.sizeX - 1, this.sizeY - 1, this.sizeZ - 1);
+    this._staticTexDirty = true;
+  }
+
+  markStaticTextureDirty() {
+    this._staticTexDirty = true;
+  }
+
+  /**
+   * Upload static sky+block atlas. When blend is active, write display-lerped
+   * values so dimming still fades without remeshing.
+   * @param {import('./brightness-blend.js').BrightnessBlendSystem | null} [blend]
+   */
+  uploadStaticTexture(blend = null) {
+    this._staticTexDirty = false;
+    const sx = this.sizeX;
+    const sy = this.sizeY;
+    const sz = this.sizeZ;
+    const texW = this._texW;
+    const data = this._staticTexData;
+    const sky = this.skylight;
+    const br = this.blockLightR;
+    const bg = this.blockLightG;
+    const bb = this.blockLightB;
+    const scale = 255 / LIGHTING.maxLevel;
+    const plane = sx * sz;
+
+    for (let y = 0; y < sy; y++) {
+      const yOff = y * plane;
+      const rowOff = y * texW;
+      for (let z = 0; z < sz; z++) {
+        const zOff = yOff + z * sx;
+        const colBase = rowOff + z * sx;
+        for (let x = 0; x < sx; x++) {
+          const idx = zOff + x;
+          const dst = (colBase + x) * 4;
+          data[dst] = Math.round(br[idx] * scale);
+          data[dst + 1] = Math.round(bg[idx] * scale);
+          data[dst + 2] = Math.round(bb[idx] * scale);
+          data[dst + 3] = Math.round(sky[idx] * scale);
+        }
+      }
+    }
+
+    if (blend?.active?.length) {
+      const now = blend.time;
+      const duration = Math.max(1e-4, blend.duration);
+      const list = blend.active;
+      for (let i = 0; i < list.length; i++) {
+        const idx = list[i];
+        const t = Math.min(1, Math.max(0, (now - blend.startTime[idx]) / duration));
+        const dispSky = Math.round(blend.fromSky[idx] + (blend.committedSky[idx] - blend.fromSky[idx]) * t);
+        const dispR = Math.round(blend.fromBlockR[idx] + (blend.committedBlockR[idx] - blend.fromBlockR[idx]) * t);
+        const dispG = Math.round(blend.fromBlockG[idx] + (blend.committedBlockG[idx] - blend.fromBlockG[idx]) * t);
+        const dispB = Math.round(blend.fromBlockB[idx] + (blend.committedBlockB[idx] - blend.fromBlockB[idx]) * t);
+        const y = Math.floor(idx / plane);
+        const rem = idx - y * plane;
+        const z = Math.floor(rem / sx);
+        const x = rem - z * sx;
+        const dst = (x + z * sx + y * texW) * 4;
+        data[dst] = Math.round(dispR * scale);
+        data[dst + 1] = Math.round(dispG * scale);
+        data[dst + 2] = Math.round(dispB * scale);
+        data[dst + 3] = Math.round(dispSky * scale);
+      }
+    }
+
+    this.staticTexture.needsUpdate = true;
+  }
+
+  /**
+   * Upload static atlas if dirty or a brightness blend is in progress.
+   * @param {import('./brightness-blend.js').BrightnessBlendSystem | null} [blend]
+   */
+  flushStaticTexture(blend = null) {
+    const blending = !!(blend?.active?.length);
+    if (!this._staticTexDirty && !blending) return;
+    this.uploadStaticTexture(blend);
   }
 
   // --- Dynamic lights -----------------------------------------------------
@@ -674,69 +872,140 @@ export class VoxelLightingSystem {
     }
 
     this._propagateSkyIncrease();
+    this._expandDirty(x0, y0, z0);
+    this._expandDirty(x1, y1, z1);
   }
 
-  _rebuildSkylightBox(rawX0, rawY0, rawZ0, rawX1, rawY1, rawZ1) {
-    const x0 = Math.max(0, rawX0);
-    const x1 = Math.min(this.sizeX - 1, rawX1);
-    const y0 = Math.max(0, rawY0);
-    const y1 = Math.min(this.sizeY - 1, rawY1);
-    const z0 = Math.max(0, rawZ0);
-    const z1 = Math.min(this.sizeZ - 1, rawZ1);
-    if (x0 > x1 || y0 > y1 || z0 > z1) return;
-
+  /**
+   * Place/opaque occlusion: column reseed + light-decrease BFS + local increase.
+   * Touches only cells that actually lost light (plus a refill pass), not a ±maxLevel wipe.
+   * @param {number[]} edits packed x,y,z triples (grid already has new opaque blocks)
+   */
+  _skylightDecreaseFromEdits(edits) {
     const falloff = LIGHTING.blockLightFalloff;
-
-    for (let x = x0; x <= x1; x++) {
-      for (let y = y0; y <= y1; y++) {
-        for (let z = z0; z <= z1; z++) {
-          this.skylight[this._index(x, y, z)] = 0;
-        }
-      }
-    }
-
-    for (let x = x0; x <= x1; x++) {
-      for (let z = z0; z <= z1; z++) {
-        this._seedColumnSkylight(x, z);
-      }
-    }
-
+    const dec = this._skyDecreaseQueue;
+    dec.length = 0;
     this._skyQueue.length = 0;
 
-    for (let x = x0; x <= x1; x++) {
-      for (let y = y0; y <= y1; y++) {
-        for (let z = z0; z <= z1; z++) {
-          const level = this.skylight[this._index(x, y, z)];
-          if (level > 0) this._skyQueue.push(x, y, z, level);
+    /** @type {Set<string>} */
+    const columns = new Set();
+    const oldCol = new Uint8Array(this.sizeY);
+
+    for (let i = 0; i < edits.length; i += 3) {
+      const ex = edits[i];
+      const ez = edits[i + 2];
+      const colKey = `${ex},${ez}`;
+      if (columns.has(colKey)) continue;
+      columns.add(colKey);
+
+      for (let y = 0; y < this.sizeY; y++) {
+        oldCol[y] = this.skylight[this._index(ex, y, ez)];
+      }
+
+      this._seedColumnSkylight(ex, ez);
+
+      for (let y = 0; y < this.sizeY; y++) {
+        const idx = this._index(ex, y, ez);
+        const neu = this.skylight[idx];
+        const old = oldCol[y];
+        if (neu < old) {
+          // Keep seed value; decrease BFS uses old to strip dependents.
+          dec.push(ex, y, ez, old);
+          this._expandDirty(ex, y, ez);
+        } else if (neu > old) {
+          this._skyQueue.push(ex, y, ez, neu);
+          this._expandDirty(ex, y, ez);
         }
       }
     }
 
-    for (let x = x0; x <= x1; x++) {
-      for (let y = y0; y <= y1; y++) {
-        for (let z = z0; z <= z1; z++) {
-          if (blocksSkylight(this.grid.get(x, y, z))) continue;
-          for (const [dx, dy, dz] of FACE_DIRS) {
-            const nx = x + dx;
-            const ny = y + dy;
-            const nz = z + dz;
-            if (nx >= x0 && nx <= x1 && ny >= y0 && ny <= y1 && nz >= z0 && nz <= z1) continue;
+    // Decrease BFS: zero cells that could only have been lit via a brighter ancestor.
+    for (let i = 0; i < dec.length; i += 4) {
+      const x = dec[i];
+      const y = dec[i + 1];
+      const z = dec[i + 2];
+      const oldLight = dec[i + 3];
 
-            let imported;
-            if (!this.grid.inBounds(nx, ny, nz)) {
-              imported = LIGHTING.maxLevel - falloff;
-            } else {
-              imported = this.skylight[this._index(nx, ny, nz)] - falloff;
-            }
-            if (imported <= 0) continue;
+      for (const [dx, dy, dz] of FACE_DIRS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        const nz = z + dz;
+        if (!this.grid.inBounds(nx, ny, nz)) continue;
+        if (blocksSkylight(this.grid.get(nx, ny, nz))) continue;
+
+        const nidx = this._index(nx, ny, nz);
+        const nLight = this.skylight[nidx];
+        if (nLight <= 0) continue;
+
+        if (nLight < oldLight) {
+          this.skylight[nidx] = 0;
+          dec.push(nx, ny, nz, nLight);
+          this._expandDirty(nx, ny, nz);
+        } else {
+          // Brighter/equal neighbor can refill the hole.
+          this._skyQueue.push(nx, ny, nz, nLight);
+        }
+      }
+    }
+
+    // Reseed touched columns again so vertical sky isn't left at 0 after side-strip.
+    for (const key of columns) {
+      const [cx, cz] = key.split(',').map(Number);
+      this._seedColumnSkylight(cx, cz);
+      for (let y = 0; y < this.sizeY; y++) {
+        const level = this.skylight[this._index(cx, y, cz)];
+        if (level > 0) this._skyQueue.push(cx, y, cz, level);
+      }
+    }
+
+    // Import light from the border of the dirty region, then increase-flood.
+    if (this._hasDirtyBounds) {
+      const pad = LIGHTING.maxLevel;
+      const x0 = Math.max(0, this._dirtyMinX - 1);
+      const x1 = Math.min(this.sizeX - 1, this._dirtyMaxX + 1);
+      const y0 = Math.max(0, this._dirtyMinY - 1);
+      const y1 = Math.min(this.sizeY - 1, this._dirtyMaxY + 1);
+      const z0 = Math.max(0, this._dirtyMinZ - 1);
+      const z1 = Math.min(this.sizeZ - 1, this._dirtyMaxZ + 1);
+
+      for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++) {
+          for (let z = z0; z <= z1; z++) {
+            if (blocksSkylight(this.grid.get(x, y, z))) continue;
             const idx = this._index(x, y, z);
-            if (imported > this.skylight[idx]) {
-              this.skylight[idx] = imported;
-              this._skyQueue.push(x, y, z, imported);
+            let level = this.skylight[idx];
+            for (const [dx, dy, dz] of FACE_DIRS) {
+              const nx = x + dx;
+              const ny = y + dy;
+              const nz = z + dz;
+              let imported;
+              if (!this.grid.inBounds(nx, ny, nz)) {
+                imported = LIGHTING.maxLevel - falloff;
+              } else {
+                imported = this.skylight[this._index(nx, ny, nz)] - falloff;
+              }
+              if (imported > level) level = imported;
             }
+            if (level > this.skylight[idx]) {
+              this.skylight[idx] = level;
+              this._expandDirty(x, y, z);
+            }
+            if (level > 0) this._skyQueue.push(x, y, z, level);
           }
         }
       }
+
+      // Track potential spread for atlas blend (increase may walk further).
+      this._expandDirty(
+        Math.max(0, this._dirtyMinX - pad),
+        Math.max(0, this._dirtyMinY - pad),
+        Math.max(0, this._dirtyMinZ - pad),
+      );
+      this._expandDirty(
+        Math.min(this.sizeX - 1, this._dirtyMaxX + pad),
+        Math.min(this.sizeY - 1, this._dirtyMaxY + pad),
+        Math.min(this.sizeZ - 1, this._dirtyMaxZ + pad),
+      );
     }
 
     this._propagateSkyIncrease();
