@@ -126,6 +126,19 @@ export class ProjectileSystem {
     return this.spawn(materialId, this._spawnPos, this._spawnVel, { mesh });
   }
 
+  /**
+   * Spawn with an explicit world-space velocity (blast edge kick, etc.).
+   */
+  spawnFromImpulse(materialId, x, y, z, vx, vy, vz, { mesh = null } = {}) {
+    this._spawnPos.set(
+      (x + 0.5) * VOXEL_SIZE,
+      (y + 0.5) * VOXEL_SIZE,
+      (z + 0.5) * VOXEL_SIZE,
+    );
+    this._spawnVel.set(vx, vy, vz);
+    return this.spawn(materialId, this._spawnPos, this._spawnVel, { mesh });
+  }
+
   canPlaceAt(x, y, z) {
     if (!this.world.grid.inBounds(x, y, z)) return false;
     const id = this.world.getBlock(x, y, z);

@@ -34,8 +34,8 @@ export class AquariumWorld {
     this.scene = scene;
     this.quality = quality;
     this.grid = new VoxelGrid(AQUARIUM_SIZE);
-    this.fluidField = new FluidField();
-    this.gasField = new GasField();
+    this.fluidField = new FluidField(AQUARIUM_SIZE);
+    this.gasField = new GasField(AQUARIUM_SIZE);
     this.lighting = new VoxelLightingSystem(this.grid);
     this.brightnessBlend = new BrightnessBlendSystem(this.lighting);
     bindDynamicLightTexture(this.lighting);
@@ -167,7 +167,7 @@ export class AquariumWorld {
   }
 
   generate(seed = DEFAULT_WORLD_SEED) {
-    this.grid.cells.clear();
+    this.grid.clear();
     this.fluidField.clear();
     this.gasField.clear();
     const onChange = this.grid.onChange;
@@ -567,7 +567,7 @@ export class AquariumWorld {
   }
 
   getStats() {
-    const solids = [...this.grid.cells.values()].filter((id) => getMaterial(id).solid).length;
+    const solids = this.grid.countWhere((id) => getMaterial(id).solid);
     const liquids = this.fluidField.count();
     const gases = this.gasField.count();
     return { total: this.grid.count(), solids, liquids, gases };

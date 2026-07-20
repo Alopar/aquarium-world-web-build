@@ -1,6 +1,7 @@
 import { FLUID } from '../constants.js';
 import { getFluid, isCalmVolume } from './registry.js';
 import { isSolid } from '../materials/registry.js';
+import { packCell, unpackCellInto } from '../world/cell-index.js';
 
 const SIDE_NEIGHBORS = [
   [1, 0, 0],
@@ -18,14 +19,7 @@ const FACE_NEIGHBORS = [
   [0, 0, -1],
 ];
 
-function cellKey(x, y, z) {
-  return `${x},${y},${z}`;
-}
-
-function parseKey(key) {
-  const [x, y, z] = key.split(',').map(Number);
-  return { x, y, z };
-}
+const _unpackScratch = { x: 0, y: 0, z: 0 };
 
 /**
  * Discrete fluid simulation: volume per cell, down then sideways, active queue.
@@ -42,10 +36,12 @@ export class FluidSystem {
   constructor(world, { maxTicksPerFrame = FLUID.maxTicksPerFrame } = {}) {
     this.world = world;
     this.maxTicksPerFrame = maxTicksPerFrame;
-    /** @type {Set<string>} */
+    /** @type {Set<number>} */
     this.active = new Set();
-    /** @type {Set<string>} cells allowed to sideways-flow despite calm bands */
+    /** @type {Set<number>} cells allowed to sideways-flow despite calm bands */
     this.disturbed = new Set();
+    /** Reused queue buffer for step() to avoid per-tick spread alloc. */
+    this._processBuf = [];
     this.accumulator = 0;
     this.rescanAccumulator = 0;
     this.evaporateAccumulator = 0;
@@ -61,18 +57,18 @@ export class FluidSystem {
    */
   activate(x, y, z) {
     const grid = this.world.grid;
-    this.active.add(cellKey(x, y, z));
+    this.active.add(packCell(x, y, z));
     for (const [ox, oy, oz] of FACE_NEIGHBORS) {
       const nx = x + ox;
       const ny = y + oy;
       const nz = z + oz;
       if (!grid.inBounds(nx, ny, nz)) continue;
-      this.active.add(cellKey(nx, ny, nz));
+      this.active.add(packCell(nx, ny, nz));
     }
   }
 
   markDisturbed(x, y, z) {
-    this.disturbed.add(cellKey(x, y, z));
+    this.disturbed.add(packCell(x, y, z));
   }
 
   /**
@@ -90,7 +86,7 @@ export class FluidSystem {
       const nz = z + oz;
       if (!grid.inBounds(nx, ny, nz)) continue;
 
-      this.active.add(cellKey(nx, ny, nz));
+      this.active.add(packCell(nx, ny, nz));
       this.markDisturbed(nx, ny, nz);
 
       if (getFluid(grid.get(nx, ny, nz))) {
@@ -210,17 +206,20 @@ export class FluidSystem {
   step() {
     if (this.active.size === 0) return;
 
-    const toProcess = [...this.active];
+    const buf = this._processBuf;
+    buf.length = 0;
+    for (const key of this.active) buf.push(key);
     this.active.clear();
 
     let processed = 0;
-    for (const key of toProcess) {
+    for (let i = 0; i < buf.length; i++) {
+      const key = buf[i];
       if (processed >= FLUID.maxCellsPerTick) {
         this.active.add(key);
         continue;
       }
-      const { x, y, z } = parseKey(key);
-      this.simulateCell(x, y, z);
+      unpackCellInto(key, _unpackScratch);
+      this.simulateCell(_unpackScratch.x, _unpackScratch.y, _unpackScratch.z);
       processed++;
     }
   }
@@ -306,7 +305,7 @@ export class FluidSystem {
     let volume = this.world.getFluidVolume(x, y, z);
     if (volume <= 0) return;
 
-    const key = cellKey(x, y, z);
+    const key = packCell(x, y, z);
     const wasDisturbed = this.disturbed.has(key);
     if (wasDisturbed) this.disturbed.delete(key);
 

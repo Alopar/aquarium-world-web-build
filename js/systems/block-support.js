@@ -1,6 +1,8 @@
-import { BLOCK_SUPPORT } from '../constants.js';
-import { hasDrops, isOrganic, isStructuralSolid } from '../materials/registry.js';
+import { BLOCK_SUPPORT, BOMB } from '../constants.js';
+import { hasDrops, isBreakable, isOrganic, isSolid, isStructuralSolid } from '../materials/registry.js';
 import { collectOrganicComponent, collectOrganicNeighbors } from '../world/trees.js';
+import { packCell } from '../world/cell-index.js';
+import { isThrowableMaterial } from './projectile-system.js';
 
 const NEIGHBORS = [
   [1, 0, 0],
@@ -12,7 +14,7 @@ const NEIGHBORS = [
 ];
 
 function cellKey(x, y, z) {
-  return `${x},${y},${z}`;
+  return packCell(x, y, z);
 }
 
 function collectSolidNeighbors(grid, x, y, z) {
@@ -181,13 +183,15 @@ export function collectFloatingChunk(grid, supported, seeds) {
   return chunk;
 }
 
-function createSupportJob(airX, airY, airZ, revision, seeds = null) {
+function createSupportJob(airX, airY, airZ, revision, seeds = null, edgeCandidates = null) {
   return {
     airX,
     airY,
     airZ,
     /** Optional explicit floating seeds (blast rim); otherwise neighbors of air cell. */
     seeds,
+    /** Blast crater-edge peel — applied after this job's normal floating cascade. */
+    edgeCandidates,
     revision,
     phase: 'seed',
     seedX: 0,
@@ -196,6 +200,29 @@ function createSupportJob(airX, airY, airZ, revision, seeds = null) {
     head: 0,
     complete: false,
   };
+}
+
+/** Dominant face axis from blast origin toward (x,y,z). */
+function blastOutwardAxis(ox, oy, oz, x, y, z) {
+  const dx = x - ox;
+  const dy = y - oy;
+  const dz = z - oz;
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  const az = Math.abs(dz);
+  if (ax < 1e-9 && ay < 1e-9 && az < 1e-9) return null;
+  if (ax >= ay && ax >= az) return [dx >= 0 ? 1 : -1, 0, 0];
+  if (ay >= az) return [0, dy >= 0 ? 1 : -1, 0];
+  return [0, 0, dz >= 0 ? 1 : -1];
+}
+
+/** True if the outward face is open — nothing solid blocking flight away from the blast. */
+function canBlastEject(grid, x, y, z, dir) {
+  const nx = x + dir[0];
+  const ny = y + dir[1];
+  const nz = z + dir[2];
+  if (!grid.inBounds(nx, ny, nz)) return true;
+  return !isSolid(grid.get(nx, ny, nz));
 }
 
 function resetSupportJob(job, revision) {
@@ -271,15 +298,185 @@ export class BlockSupportSystem {
   }
 
   /**
-   * After a multi-block blast: rim solids adjacent to destroyed cells.
-   * Vertical-column precheck culls grounded edges; suspicious ones seed one support job.
-   * @param {number[]} destroyed flat [x,y,z, ...] from blast removals (optional; uses buffer)
+   * After a multi-block blast:
+   * 1) same-frame outward eject for free rim faces;
+   * 2) deferred floor-support cascade + peel for leftovers with nothing below.
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} cz
    */
-  onBlastFinished() {
+  onBlastFinished(cx, cy, cz) {
     const destroyed = this._blastDestroyed;
     if (destroyed.length === 0) return;
     this._blastDestroyed = [];
 
+    const blastOrigin = { x: cx, y: cy, z: cz };
+    const edgeCandidates = this.collectBlastEdgeCandidates(destroyed);
+
+    // Impulse kicks must land in the explosion frame — not after support BFS.
+    this.applyBlastEdgeEject(edgeCandidates, blastOrigin);
+
+    const queued = this.enqueueBlastRimSupport(destroyed, edgeCandidates);
+    if (!queued) {
+      this.scheduleBlastEdgePeel(edgeCandidates);
+    }
+  }
+
+  /**
+   * Breakable rim solids adjacent to destroyed cells (shock / cave edge).
+   * @param {number[]} destroyed flat [x,y,z, ...]
+   * @returns {{ x: number, y: number, z: number, materialId: string }[]}
+   */
+  collectBlastEdgeCandidates(destroyed) {
+    const { grid } = this.world;
+    const seen = new Set();
+    const candidates = [];
+
+    for (let i = 0; i < destroyed.length; i += 3) {
+      const x = destroyed[i];
+      const y = destroyed[i + 1];
+      const z = destroyed[i + 2];
+
+      for (const [dx, dy, dz] of NEIGHBORS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        const nz = z + dz;
+        if (!grid.inBounds(nx, ny, nz)) continue;
+
+        const key = cellKey(nx, ny, nz);
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        if (ny < 0) continue;
+
+        const materialId = grid.get(nx, ny, nz);
+        if (!isSolid(materialId) || !isBreakable(materialId)) continue;
+
+        candidates.push({ x: nx, y: ny, z: nz, materialId });
+      }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Same-frame blast kick: rim blocks with a free outward face become projectiles.
+   * @param {{ x: number, y: number, z: number, materialId: string }[]} candidates
+   * @param {{ x: number, y: number, z: number }} blastOrigin
+   */
+  applyBlastEdgeEject(candidates, blastOrigin) {
+    if (!candidates?.length || !blastOrigin) return;
+
+    const { grid } = this.world;
+
+    this.world.beginEditBatch();
+    try {
+      for (const c of candidates) {
+        const materialId = grid.get(c.x, c.y, c.z);
+        if (materialId !== c.materialId) continue;
+        if (!isSolid(materialId) || !isBreakable(materialId)) continue;
+        this.tryBlastEdgeEject(c.x, c.y, c.z, materialId, blastOrigin);
+      }
+    } finally {
+      this.world.endEditBatch();
+    }
+  }
+
+  /**
+   * Deferred peel: leftovers with nothing below enter cascade (after support job if any).
+   * Skips blocks already pending or already ejected.
+   * @param {{ x: number, y: number, z: number, materialId: string }[]} candidates
+   */
+  scheduleBlastEdgePeel(candidates) {
+    if (!candidates?.length) return;
+
+    const { grid } = this.world;
+    const toFall = [];
+
+    for (const c of candidates) {
+      const key = cellKey(c.x, c.y, c.z);
+      if (this.pendingByKey.has(key)) continue;
+
+      const materialId = grid.get(c.x, c.y, c.z);
+      if (materialId !== c.materialId) continue;
+      if (!isSolid(materialId) || !isBreakable(materialId)) continue;
+      if (c.y <= 0 || isSolid(grid.get(c.x, c.y - 1, c.z))) continue;
+
+      toFall.push({
+        x: c.x,
+        y: c.y,
+        z: c.z,
+        materialId,
+        distance: 0,
+        timer: BLOCK_SUPPORT.breakDelay,
+      });
+    }
+
+    if (toFall.length > 0) {
+      this.scheduleChunk(toFall);
+    }
+  }
+
+  /**
+   * If outward face (away from blast) is clear, remove the block and fling it.
+   * @returns {boolean} true if handled (ejected or destroyed as drops)
+   */
+  tryBlastEdgeEject(x, y, z, materialId, blastOrigin) {
+    const dir = blastOutwardAxis(blastOrigin.x, blastOrigin.y, blastOrigin.z, x, y, z);
+    if (!dir) return false;
+    if (!canBlastEject(this.world.grid, x, y, z, dir)) return false;
+
+    this.detachedBlocks?.cancelAt(x, y, z);
+    this.treeMeshes?.removeCell(x, y, z);
+
+    if (!this.world.setBlock(x, y, z, 'air', { source: 'collapse', skipMesh: true })) {
+      return false;
+    }
+
+    this.sound?.playBlockBreak(materialId);
+
+    if (isOrganic(materialId)) {
+      this.particleSystem?.spawnBlockBreak(x, y, z, materialId);
+      if (hasDrops(materialId)) {
+        this.lootSystem?.spawnBurst(materialId, x, y, z);
+      }
+      return true;
+    }
+
+    if (hasDrops(materialId)) {
+      this.particleSystem?.spawnBlockBreak(x, y, z, materialId);
+      this.lootSystem?.spawnBurst(materialId, x, y, z);
+      return true;
+    }
+
+    if (!isThrowableMaterial(materialId)) {
+      this.particleSystem?.spawnBlockBreak(x, y, z, materialId);
+      return true;
+    }
+
+    const dx = x - blastOrigin.x;
+    const dy = y - blastOrigin.y;
+    const dz = z - blastOrigin.z;
+    const len = Math.hypot(dx, dy, dz) || 1;
+    const speed = BOMB.edgeImpulse;
+    const vx = (dx / len) * speed;
+    const vy = (dy / len) * speed + BOMB.edgeImpulseUp;
+    const vz = (dz / len) * speed;
+
+    const spawned = this.projectileSystem?.spawnFromImpulse(materialId, x, y, z, vx, vy, vz);
+    if (!spawned) {
+      this.particleSystem?.spawnBlockBreak(x, y, z, materialId);
+    }
+    return true;
+  }
+
+  /**
+   * Rim solids that lack a vertical column seed one floor-BFS support job.
+   * @param {number[]} destroyed flat [x,y,z, ...]
+   * @param {{ x: number, y: number, z: number, materialId: string }[]} edgeCandidates
+   * @returns {boolean} true if a support job was queued
+   */
+  enqueueBlastRimSupport(destroyed, edgeCandidates = null) {
     const { grid } = this.world;
     const rim = new Map();
 
@@ -292,7 +489,7 @@ export class BlockSupportSystem {
       }
     }
 
-    if (rim.size === 0) return;
+    if (rim.size === 0) return false;
 
     const suspicious = [];
     for (const pos of rim.values()) {
@@ -300,11 +497,19 @@ export class BlockSupportSystem {
       suspicious.push(pos);
     }
 
-    if (suspicious.length === 0) return;
+    if (suspicious.length === 0) return false;
 
     this.bumpWorldRevision();
     const [sx, sy, sz] = suspicious[0];
-    this.jobs.push(createSupportJob(sx, sy, sz, this.worldRevision, suspicious));
+    this.jobs.push(createSupportJob(
+      sx,
+      sy,
+      sz,
+      this.worldRevision,
+      suspicious,
+      edgeCandidates,
+    ));
+    return true;
   }
 
   /** After chopping organic: cascade-destroy unrooted wood/organic. */
@@ -450,8 +655,13 @@ export class BlockSupportSystem {
     const { grid } = this.world;
     const seeds = job.seeds ?? collectSolidNeighbors(grid, job.airX, job.airY, job.airZ);
     const chunk = collectFloatingChunk(grid, job.supported, seeds);
-    if (chunk.length === 0) return;
-    this.scheduleChunk(chunk);
+    if (chunk.length > 0) {
+      this.scheduleChunk(chunk);
+    }
+    // After normal floating cascade: peel crater-edge leftovers still hanging.
+    if (job.edgeCandidates) {
+      this.scheduleBlastEdgePeel(job.edgeCandidates);
+    }
   }
 
   advanceSupportJobs() {

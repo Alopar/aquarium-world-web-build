@@ -114,6 +114,17 @@ export class VoxelLightingSystem {
     this._decayAcc = 0;
     this._texDirty = false;
     this._staticTexDirty = true;
+    /** Force full static atlas pack+upload (init / rebuildAll). */
+    this._staticFullUpload = true;
+    /** @type {import('three').WebGLRenderer | null} */
+    this._renderer = null;
+    /** Previous dynamic lit Y-band for partial CPU clear. */
+    this._dynPrevMinY = 0;
+    this._dynPrevMaxY = -1;
+    /** Y-band to pack on next static upload (snapshot; independent of live dirty box). */
+    this._staticUploadMinY = 0;
+    this._staticUploadMaxY = -1;
+    this._hasStaticUploadBand = false;
 
     // RGBA atlas: width = sizeX * sizeZ, height = sizeY (row = y, col = x + z*sizeX)
     this._texW = x * z;
@@ -293,13 +304,21 @@ export class VoxelLightingSystem {
   }
 
   /**
-   * True when placing an opaque block at (x,y,z) cannot darken any neighbor.
+   * True when placing an opaque block at (x,y,z) cannot darken any other cell.
    * Reads the CURRENT skylight field (still pre-update values when called from onChange).
+   * Must not skip when the column below is open — vertical skylight is cut by opacity,
+   * not only by the face-neighbor decrease BFS heuristic.
    */
   canSkipSkylightDecrease(x, y, z) {
     if (!this.grid.inBounds(x, y, z)) return true;
     const oldSky = this.skylight[this._index(x, y, z)];
     if (oldSky <= 0) return true;
+
+    // Open cells under this column lose downward sky once this cell becomes opaque.
+    for (let by = y - 1; by >= 0; by--) {
+      if (blocksSkylight(this.grid.get(x, by, z))) break;
+      return false;
+    }
 
     for (const [dx, dy, dz] of FACE_DIRS) {
       const nx = x + dx;
@@ -319,6 +338,8 @@ export class VoxelLightingSystem {
     if (this.skylight[idx] === 0) return;
     this.skylight[idx] = 0;
     this._staticTexDirty = true;
+    this._expandDirty(x, y, z);
+    this._captureStaticUploadBand();
     this.onAfterFlush?.({
       minX: x,
       minY: y,
@@ -450,7 +471,29 @@ export class VoxelLightingSystem {
     }
 
     this._staticTexDirty = true;
+    this._captureStaticUploadBand();
     this.onAfterFlush?.(this._dirtyBox(0));
+  }
+
+  /**
+   * Snapshot dirty Y range for the next static atlas pack.
+   * Pads by maxLevel so any flood that missed expandDirty still covers neighbors.
+   */
+  _captureStaticUploadBand() {
+    if (!this._hasDirtyBounds) {
+      return;
+    }
+    const pad = LIGHTING.maxLevel;
+    const y0 = Math.max(0, this._dirtyMinY - pad);
+    const y1 = Math.min(this.sizeY - 1, this._dirtyMaxY + pad);
+    if (!this._hasStaticUploadBand) {
+      this._staticUploadMinY = y0;
+      this._staticUploadMaxY = y1;
+      this._hasStaticUploadBand = true;
+      return;
+    }
+    if (y0 < this._staticUploadMinY) this._staticUploadMinY = y0;
+    if (y1 > this._staticUploadMaxY) this._staticUploadMaxY = y1;
   }
 
   rebuildAll() {
@@ -470,6 +513,16 @@ export class VoxelLightingSystem {
     this._propagateSkylightFromAllLit();
     this._rebuildBlockLightBox(0, 0, 0, this.sizeX - 1, this.sizeY - 1, this.sizeZ - 1);
     this._staticTexDirty = true;
+    this._staticFullUpload = true;
+    this._hasStaticUploadBand = false;
+  }
+
+  /**
+   * Bind WebGLRenderer (kept for API compatibility / future partial GL uploads).
+   * @param {import('three').WebGLRenderer | null} renderer
+   */
+  setRenderer(renderer) {
+    this._renderer = renderer;
   }
 
   markStaticTextureDirty() {
@@ -477,14 +530,12 @@ export class VoxelLightingSystem {
   }
 
   /**
-   * Upload static sky+block atlas. When blend is active, write display-lerped
-   * values so dimming still fades without remeshing.
-   * @param {import('./brightness-blend.js').BrightnessBlendSystem | null} [blend]
+   * Pack sky+block levels into atlas bytes for a Y range (inclusive).
+   * @param {number} y0
+   * @param {number} y1
    */
-  uploadStaticTexture(blend = null) {
-    this._staticTexDirty = false;
+  _packStaticRows(y0, y1) {
     const sx = this.sizeX;
-    const sy = this.sizeY;
     const sz = this.sizeZ;
     const texW = this._texW;
     const data = this._staticTexData;
@@ -494,8 +545,10 @@ export class VoxelLightingSystem {
     const bb = this.blockLightB;
     const scale = 255 / LIGHTING.maxLevel;
     const plane = sx * sz;
+    const yStart = Math.max(0, y0);
+    const yEnd = Math.min(this.sizeY - 1, y1);
 
-    for (let y = 0; y < sy; y++) {
+    for (let y = yStart; y <= yEnd; y++) {
       const yOff = y * plane;
       const rowOff = y * texW;
       for (let z = 0; z < sz; z++) {
@@ -511,30 +564,81 @@ export class VoxelLightingSystem {
         }
       }
     }
+  }
+
+  /**
+   * Apply brightness-blend display overrides; returns [minY, maxY] touched or null.
+   * @param {import('./brightness-blend.js').BrightnessBlendSystem | null} blend
+   * @returns {[number, number] | null}
+   */
+  _applyBlendOverrides(blend) {
+    if (!blend?.active?.length) return null;
+    const sx = this.sizeX;
+    const plane = sx * this.sizeZ;
+    const texW = this._texW;
+    const data = this._staticTexData;
+    const scale = 255 / LIGHTING.maxLevel;
+    const now = blend.time;
+    const duration = Math.max(1e-4, blend.duration);
+    const list = blend.active;
+    let minY = this.sizeY;
+    let maxY = -1;
+
+    for (let i = 0; i < list.length; i++) {
+      const idx = list[i];
+      const t = Math.min(1, Math.max(0, (now - blend.startTime[idx]) / duration));
+      const dispSky = Math.round(blend.fromSky[idx] + (blend.committedSky[idx] - blend.fromSky[idx]) * t);
+      const dispR = Math.round(blend.fromBlockR[idx] + (blend.committedBlockR[idx] - blend.fromBlockR[idx]) * t);
+      const dispG = Math.round(blend.fromBlockG[idx] + (blend.committedBlockG[idx] - blend.fromBlockG[idx]) * t);
+      const dispB = Math.round(blend.fromBlockB[idx] + (blend.committedBlockB[idx] - blend.fromBlockB[idx]) * t);
+      const y = Math.floor(idx / plane);
+      const rem = idx - y * plane;
+      const z = Math.floor(rem / sx);
+      const x = rem - z * sx;
+      const dst = (x + z * sx + y * texW) * 4;
+      data[dst] = Math.round(dispR * scale);
+      data[dst + 1] = Math.round(dispG * scale);
+      data[dst + 2] = Math.round(dispB * scale);
+      data[dst + 3] = Math.round(dispSky * scale);
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return maxY >= minY ? [minY, maxY] : null;
+  }
+
+  /**
+   * Upload static sky+block atlas. When blend is active, write display-lerped
+   * values so dimming still fades without remeshing.
+   * Packs only dirty Y-bands on CPU; GPU always gets a full DataTexture update
+   * (reliable — avoids texSubImage byteOffset / WebGLState desync bugs).
+   * @param {import('./brightness-blend.js').BrightnessBlendSystem | null} [blend]
+   */
+  uploadStaticTexture(blend = null) {
+    this._staticTexDirty = false;
+    const full = this._staticFullUpload || !this._hasStaticUploadBand;
+    this._staticFullUpload = false;
+
+    let y0 = 0;
+    let y1 = this.sizeY - 1;
+    if (!full && this._hasStaticUploadBand) {
+      y0 = this._staticUploadMinY;
+      y1 = this._staticUploadMaxY;
+    }
+    this._hasStaticUploadBand = false;
 
     if (blend?.active?.length) {
-      const now = blend.time;
-      const duration = Math.max(1e-4, blend.duration);
+      const plane = this.sizeX * this.sizeZ;
       const list = blend.active;
       for (let i = 0; i < list.length; i++) {
-        const idx = list[i];
-        const t = Math.min(1, Math.max(0, (now - blend.startTime[idx]) / duration));
-        const dispSky = Math.round(blend.fromSky[idx] + (blend.committedSky[idx] - blend.fromSky[idx]) * t);
-        const dispR = Math.round(blend.fromBlockR[idx] + (blend.committedBlockR[idx] - blend.fromBlockR[idx]) * t);
-        const dispG = Math.round(blend.fromBlockG[idx] + (blend.committedBlockG[idx] - blend.fromBlockG[idx]) * t);
-        const dispB = Math.round(blend.fromBlockB[idx] + (blend.committedBlockB[idx] - blend.fromBlockB[idx]) * t);
-        const y = Math.floor(idx / plane);
-        const rem = idx - y * plane;
-        const z = Math.floor(rem / sx);
-        const x = rem - z * sx;
-        const dst = (x + z * sx + y * texW) * 4;
-        data[dst] = Math.round(dispR * scale);
-        data[dst + 1] = Math.round(dispG * scale);
-        data[dst + 2] = Math.round(dispB * scale);
-        data[dst + 3] = Math.round(dispSky * scale);
+        const y = (list[i] / plane) | 0;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
       }
     }
 
+    this._packStaticRows(y0, y1);
+    this._applyBlendOverrides(blend);
+    // Full GPU upload of image.data — other rows already hold last good pack.
     this.staticTexture.needsUpdate = true;
   }
 
@@ -545,6 +649,26 @@ export class VoxelLightingSystem {
   flushStaticTexture(blend = null) {
     const blending = !!(blend?.active?.length);
     if (!this._staticTexDirty && !blending) return;
+
+    // Blend-only frames: repack only Y rows touched by active blends.
+    if (!this._staticTexDirty && blending && !this._staticFullUpload) {
+      const plane = this.sizeX * this.sizeZ;
+      const list = blend.active;
+      let y0 = this.sizeY;
+      let y1 = -1;
+      for (let i = 0; i < list.length; i++) {
+        const y = (list[i] / plane) | 0;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+      if (y1 >= y0) {
+        this._packStaticRows(y0, y1);
+        this._applyBlendOverrides(blend);
+        this.staticTexture.needsUpdate = true;
+      }
+      return;
+    }
+
     this.uploadStaticTexture(blend);
   }
 
@@ -698,6 +822,7 @@ export class VoxelLightingSystem {
     this._dynLit.length = 0;
     this._dynLitFlag.fill(0);
     this._texDirty = true;
+    // Keep prev Y so next upload clears the old lit band.
   }
 
   /** @returns {boolean} whether any cell changed */
@@ -787,21 +912,48 @@ export class VoxelLightingSystem {
   _uploadDynamicTexture() {
     this._texDirty = false;
     const sx = this.sizeX;
-    const sz = this.sizeZ;
     const data = this._texData;
     const dr = this.dynamicLightR;
     const dg = this.dynamicLightG;
     const db = this.dynamicLightB;
     const scale = 255 / LIGHTING.maxLevel;
     const texW = this._texW;
-
-    data.fill(0);
+    const plane = sx * this.sizeZ;
     const lit = this._dynLit;
+
+    let litMinY = this.sizeY;
+    let litMaxY = -1;
+    for (let i = 0; i < lit.length; i++) {
+      const y = (lit[i] / plane) | 0;
+      if (y < litMinY) litMinY = y;
+      if (y > litMaxY) litMaxY = y;
+    }
+
+    let y0 = litMinY;
+    let y1 = litMaxY;
+    if (this._dynPrevMaxY >= this._dynPrevMinY) {
+      if (y1 < y0) {
+        y0 = this._dynPrevMinY;
+        y1 = this._dynPrevMaxY;
+      } else {
+        if (this._dynPrevMinY < y0) y0 = this._dynPrevMinY;
+        if (this._dynPrevMaxY > y1) y1 = this._dynPrevMaxY;
+      }
+    }
+
+    if (y1 < y0) {
+      data.fill(0);
+    } else {
+      // Clear union Y-band (covers cells that went dark), then write current lit.
+      const rowBytes = texW * 4;
+      data.fill(0, y0 * rowBytes, (y1 + 1) * rowBytes);
+    }
+
     for (let i = 0; i < lit.length; i++) {
       const idx = lit[i];
-      const y = Math.floor(idx / (sx * sz));
-      const rem = idx - y * sx * sz;
-      const z = Math.floor(rem / sx);
+      const y = (idx / plane) | 0;
+      const rem = idx - y * plane;
+      const z = (rem / sx) | 0;
       const x = rem - z * sx;
       const dst = (x + z * sx + y * texW) * 4;
       data[dst] = Math.round(dr[idx] * scale);
@@ -809,7 +961,10 @@ export class VoxelLightingSystem {
       data[dst + 2] = Math.round(db[idx] * scale);
       data[dst + 3] = 255;
     }
+
     this.dynamicTexture.needsUpdate = true;
+    this._dynPrevMinY = litMinY;
+    this._dynPrevMaxY = litMaxY;
   }
 
   // --- Skylight / static blocklight (unchanged flood) ---------------------

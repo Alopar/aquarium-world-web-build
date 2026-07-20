@@ -85,6 +85,10 @@ export const BOMB = {
   fuseTime: 1.6,
   /** Voxel sphere radius (inclusive distance in cells) */
   radius: 2,
+  /** Impulse for rim blocks kicked outward when the outward face is free */
+  edgeImpulse: 9,
+  /** Slight upward bias on blast-edge ejects */
+  edgeImpulseUp: 2.5,
   /** Max HP damage at epicenter; falls off with distance */
   playerDamage: 45,
   /** Blink emissive while fuse burns */

@@ -151,7 +151,7 @@ export class BombSystem {
       this.world.endEditBatch();
     }
 
-    this.world.blockSupport?.onBlastFinished();
+    this.world.blockSupport?.onBlastFinished(cx, cy, cz);
     this.damagePlayer(worldX, worldY, worldZ);
   }
 

@@ -1,6 +1,7 @@
 import { GAS } from '../constants.js';
 import { getGas, isActiveGasVolume } from './registry.js';
 import { isSolid } from '../materials/registry.js';
+import { packCell, unpackCellInto } from '../world/cell-index.js';
 
 const FACE_NEIGHBORS = [
   [1, 0, 0],
@@ -11,14 +12,7 @@ const FACE_NEIGHBORS = [
   [0, 0, -1],
 ];
 
-function cellKey(x, y, z) {
-  return `${x},${y},${z}`;
-}
-
-function parseKey(key) {
-  const [x, y, z] = key.split(',').map(Number);
-  return { x, y, z };
-}
+const _unpackScratch = { x: 0, y: 0, z: 0 };
 
 /**
  * Discrete gas simulation: volume per cell, omni flow while above activeThreshold,
@@ -31,10 +25,11 @@ export class GasSystem {
   constructor(world, { maxTicksPerFrame = GAS.maxTicksPerFrame } = {}) {
     this.world = world;
     this.maxTicksPerFrame = maxTicksPerFrame;
-    /** @type {Set<string>} */
+    /** @type {Set<number>} */
     this.active = new Set();
-    /** @type {Set<string>} */
+    /** @type {Set<number>} */
     this.disturbed = new Set();
+    this._processBuf = [];
     this.accumulator = 0;
     this.rescanAccumulator = 0;
     this.dissolveAccumulator = 0;
@@ -44,18 +39,18 @@ export class GasSystem {
 
   activate(x, y, z) {
     const grid = this.world.grid;
-    this.active.add(cellKey(x, y, z));
+    this.active.add(packCell(x, y, z));
     for (const [ox, oy, oz] of FACE_NEIGHBORS) {
       const nx = x + ox;
       const ny = y + oy;
       const nz = z + oz;
       if (!grid.inBounds(nx, ny, nz)) continue;
-      this.active.add(cellKey(nx, ny, nz));
+      this.active.add(packCell(nx, ny, nz));
     }
   }
 
   markDisturbed(x, y, z) {
-    this.disturbed.add(cellKey(x, y, z));
+    this.disturbed.add(packCell(x, y, z));
   }
 
   propagateDisturbance(x, y, z) {
@@ -69,7 +64,7 @@ export class GasSystem {
       const nz = z + oz;
       if (!grid.inBounds(nx, ny, nz)) continue;
 
-      this.active.add(cellKey(nx, ny, nz));
+      this.active.add(packCell(nx, ny, nz));
       this.markDisturbed(nx, ny, nz);
 
       if (getGas(grid.get(nx, ny, nz))) {
@@ -144,17 +139,20 @@ export class GasSystem {
   step() {
     if (this.active.size === 0) return;
 
-    const toProcess = [...this.active];
+    const buf = this._processBuf;
+    buf.length = 0;
+    for (const key of this.active) buf.push(key);
     this.active.clear();
 
     let processed = 0;
-    for (const key of toProcess) {
+    for (let i = 0; i < buf.length; i++) {
+      const key = buf[i];
       if (processed >= GAS.maxCellsPerTick) {
         this.active.add(key);
         continue;
       }
-      const { x, y, z } = parseKey(key);
-      this.simulateCell(x, y, z);
+      unpackCellInto(key, _unpackScratch);
+      this.simulateCell(_unpackScratch.x, _unpackScratch.y, _unpackScratch.z);
       processed++;
     }
   }
@@ -221,7 +219,7 @@ export class GasSystem {
     const volume = this.world.getGasVolume(x, y, z);
     if (volume <= 0) return;
 
-    const key = cellKey(x, y, z);
+    const key = packCell(x, y, z);
     if (this.disturbed.has(key)) this.disturbed.delete(key);
 
     // Calm band: no flow (dissolve handles thinning).

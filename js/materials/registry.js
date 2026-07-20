@@ -224,6 +224,35 @@ export const MATERIALS = {
 
 import { isItem } from '../items/registry.js';
 
+/** Numeric material codes for dense voxel storage (air = 0). */
+const MATERIAL_ID_TO_CODE = new Map();
+const MATERIAL_CODE_TO_ID = [];
+
+(function initMaterialCodes() {
+  let code = 0;
+  for (const id of Object.keys(MATERIALS)) {
+    MATERIAL_ID_TO_CODE.set(id, code);
+    MATERIAL_CODE_TO_ID[code] = id;
+    code += 1;
+  }
+  if (MATERIAL_ID_TO_CODE.get('air') !== 0) {
+    throw new Error('material code 0 must be air');
+  }
+  if (code > 255) {
+    throw new Error('too many materials for Uint8 dense storage');
+  }
+})();
+
+/** @param {string} id @returns {number} */
+export function materialCode(id) {
+  return MATERIAL_ID_TO_CODE.get(id) ?? 0;
+}
+
+/** @param {number} code @returns {string} */
+export function materialId(code) {
+  return MATERIAL_CODE_TO_ID[code] ?? 'air';
+}
+
 export function getMaterial(id) {
   return MATERIALS[id] ?? MATERIALS.air;
 }

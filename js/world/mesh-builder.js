@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CHUNK_SIZE, LIGHTING, MAX_CHUNKS_REBUILD_PER_FRAME, VOXEL_SIZE } from '../constants.js';
 import { getMaterial, isOpaque, listSolidMaterials } from '../materials/registry.js';
 import { createVoxelBrightnessMaterial } from '../shaders/voxel-brightness-material.js';
+import { ScratchPool, applyScratchToGeometry, VertexScratch } from './mesh-buffer-pool.js';
 
 const FACE_DEFS = [
   { dir: [1, 0, 0], normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], uv: (x, y, z, c) => [y + c[1], z + c[2]] },
@@ -28,20 +29,24 @@ function createMeshMaterial(materialDef) {
   return createVoxelBrightnessMaterial(materialDef);
 }
 
-function getOrCreateBuffer(buffers, key) {
-  if (!buffers.has(key)) {
-    buffers.set(key, {
-      positions: [],
-      normals: [],
-      uvs: [],
-      indices: [],
-    });
+function appendSolidFace(scratch, x, y, z, face) {
+  const base = scratch.vertexCount;
+  const [nx, ny, nz] = face.normal;
+  for (const corner of face.corners) {
+    const [du, dv] = face.uv(x, y, z, corner);
+    scratch.pushVertex(
+      (x + corner[0]) * VOXEL_SIZE,
+      (y + corner[1]) * VOXEL_SIZE,
+      (z + corner[2]) * VOXEL_SIZE,
+      nx, ny, nz,
+      du, dv,
+    );
   }
-  return buffers.get(key);
+  scratch.pushIndexQuad(base);
 }
 
-function buildChunkBuffers(grid, _lighting, _blend, cx, cy, cz, chunkSize, meshSkip = null) {
-  const buffers = new Map();
+function buildChunkBuffers(pool, grid, cx, cy, cz, chunkSize, meshSkip = null) {
+  pool.beginFrame();
   const x0 = cx * chunkSize;
   const y0 = cy * chunkSize;
   const z0 = cz * chunkSize;
@@ -57,62 +62,53 @@ function buildChunkBuffers(grid, _lighting, _blend, cx, cy, cz, chunkSize, meshS
         const matDef = getMaterial(id);
         if (!matDef.solid) continue;
 
-        const buf = getOrCreateBuffer(buffers, id);
+        const buf = pool.get(id);
 
         for (const face of FACE_DEFS) {
           const nx = x + face.dir[0];
           const ny = y + face.dir[1];
           const nz = z + face.dir[2];
           if (!shouldRenderFace(grid, nx, ny, nz, meshSkip)) continue;
-
-          const base = buf.positions.length / 3;
-          for (const corner of face.corners) {
-            buf.positions.push(
-              (x + corner[0]) * VOXEL_SIZE,
-              (y + corner[1]) * VOXEL_SIZE,
-              (z + corner[2]) * VOXEL_SIZE,
-            );
-            buf.normals.push(...face.normal);
-
-            const [du, dv] = face.uv(x, y, z, corner);
-            buf.uvs.push(du, dv);
-          }
-
-          buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+          appendSolidFace(buf, x, y, z, face);
         }
       }
     }
   }
 
-  return buffers;
+  return pool;
 }
 
-function createMeshFromBuffer(buf, key, threeMaterials, name) {
+function createMeshFromScratch(scratch, key, threeMaterials, name) {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(buf.positions, 3));
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buf.normals, 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uvs, 2));
-  geometry.setIndex(buf.indices);
-  geometry.computeBoundingSphere();
-
+  applyScratchToGeometry(geometry, scratch);
   const mesh = new THREE.Mesh(geometry, threeMaterials.get(key));
   mesh.name = name;
   return mesh;
 }
 
-function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz, chunkSize) {
-  for (const mesh of chunk.meshes.values()) {
+function applyBuffersToChunk(chunk, pool, threeMaterials, cx, cy, cz, chunkSize) {
+  const keep = new Set();
+
+  for (const [key, scratch] of pool.entries()) {
+    if (scratch.posCount === 0) continue;
+    keep.add(key);
+
+    let mesh = chunk.meshes.get(key);
+    if (!mesh) {
+      mesh = createMeshFromScratch(scratch, key, threeMaterials, `chunk-${cx},${cy},${cz}-${key}`);
+      chunk.meshes.set(key, mesh);
+      chunk.group.add(mesh);
+    } else {
+      applyScratchToGeometry(mesh.geometry, scratch);
+      mesh.visible = true;
+    }
+  }
+
+  for (const [key, mesh] of chunk.meshes) {
+    if (keep.has(key)) continue;
     mesh.geometry.dispose();
     chunk.group.remove(mesh);
-  }
-  chunk.meshes.clear();
-
-  for (const [key, buf] of buffers) {
-    if (buf.positions.length === 0) continue;
-
-    const mesh = createMeshFromBuffer(buf, key, threeMaterials, `chunk-${cx},${cy},${cz}-${key}`);
-    chunk.meshes.set(key, mesh);
-    chunk.group.add(mesh);
+    chunk.meshes.delete(key);
   }
 
   const s = chunkSize * VOXEL_SIZE;
@@ -159,6 +155,8 @@ export class MeshBuilder {
     this._statsCache = null;
     this._statsCacheFrame = 0;
     this._statsFrameCounter = 0;
+    this._scratchPool = new ScratchPool({ hasUvs: true });
+    this._overlayScratch = new VertexScratch({ hasUvs: true });
 
     const { x: sx, y: sy, z: sz } = grid.size;
     this.chunksX = Math.ceil(sx / chunkSize);
@@ -238,32 +236,27 @@ export class MeshBuilder {
     const mat = this.threeMaterials.get(materialId);
     if (!mat) return null;
 
-    const positions = [];
-    const normals = [];
-    const uvs = [];
-    const indices = [];
+    const scratch = this._overlayScratch;
+    scratch.reset();
 
     for (const face of FACE_DEFS) {
-      const base = positions.length / 3;
+      const base = scratch.vertexCount;
+      const [nx, ny, nz] = face.normal;
       for (const corner of face.corners) {
-        positions.push(
+        const [du, dv] = face.uv(x, y, z, corner);
+        scratch.pushVertex(
           (corner[0] - 0.5) * VOXEL_SIZE,
           (corner[1] - 0.5) * VOXEL_SIZE,
           (corner[2] - 0.5) * VOXEL_SIZE,
+          nx, ny, nz,
+          du, dv,
         );
-        normals.push(...face.normal);
-        const [du, dv] = face.uv(x, y, z, corner);
-        uvs.push(du, dv);
       }
-      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      scratch.pushIndexQuad(base);
     }
 
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geometry.setIndex(indices);
-    geometry.computeBoundingSphere();
+    applyScratchToGeometry(geometry, scratch);
 
     const mesh = new THREE.Mesh(geometry, mat);
     mesh.name = `overlay-${materialId}`;
@@ -284,41 +277,30 @@ export class MeshBuilder {
   createBlocksMeshGroup(blocks, name = 'blocks-group') {
     if (!blocks?.length) return null;
 
-    const buffers = new Map();
+    const pool = new ScratchPool({ hasUvs: true });
+    pool.beginFrame();
 
     for (const block of blocks) {
       const { x, y, z, materialId } = block;
       if (!this.threeMaterials.has(materialId)) continue;
 
-      const buf = getOrCreateBuffer(buffers, materialId);
+      const buf = pool.get(materialId);
 
       for (const face of FACE_DEFS) {
         const nx = x + face.dir[0];
         const ny = y + face.dir[1];
         const nz = z + face.dir[2];
         if (!shouldRenderFace(this.grid, nx, ny, nz, null)) continue;
-
-        const base = buf.positions.length / 3;
-        for (const corner of face.corners) {
-          buf.positions.push(
-            (x + corner[0]) * VOXEL_SIZE,
-            (y + corner[1]) * VOXEL_SIZE,
-            (z + corner[2]) * VOXEL_SIZE,
-          );
-          buf.normals.push(...face.normal);
-          const [du, dv] = face.uv(x, y, z, corner);
-          buf.uvs.push(du, dv);
-        }
-        buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        appendSolidFace(buf, x, y, z, face);
       }
     }
 
     const group = new THREE.Group();
     group.name = name;
 
-    for (const [key, buf] of buffers) {
-      if (buf.positions.length === 0) continue;
-      const mesh = createMeshFromBuffer(buf, key, this.threeMaterials, `${name}-${key}`);
+    for (const [key, scratch] of pool.entries()) {
+      if (scratch.posCount === 0) continue;
+      const mesh = createMeshFromScratch(scratch, key, this.threeMaterials, `${name}-${key}`);
       mesh.userData.sharedMaterial = true;
       group.add(mesh);
     }
@@ -522,17 +504,16 @@ export class MeshBuilder {
 
   rebuildChunk(cx, cy, cz) {
     const chunk = this.getOrCreateChunk(cx, cy, cz);
-    const buffers = buildChunkBuffers(
+    const pool = buildChunkBuffers(
+      this._scratchPool,
       this.grid,
-      this.lighting,
-      this.brightnessBlend,
       cx,
       cy,
       cz,
       this.chunkSize,
       this.meshSkip,
     );
-    applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz, this.chunkSize);
+    applyBuffersToChunk(chunk, pool, this.threeMaterials, cx, cy, cz, this.chunkSize);
     this.onChunkRebuilt?.(cx, cy, cz);
   }
 

@@ -182,6 +182,7 @@ export class App {
 
     await step(0.35, 'Создание аквариума...', () => {
       this.world = new AquariumWorld(this.scene, { quality: this.quality });
+      this.world.lighting.setRenderer(this.renderer);
       this.world.createTank();
     });
 

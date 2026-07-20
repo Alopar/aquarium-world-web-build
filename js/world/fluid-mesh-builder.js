@@ -6,6 +6,7 @@ import {
   createFluidShaderMaterial,
   updateFluidShaderTime,
 } from '../shaders/fluid-material.js';
+import { ScratchPool, applyScratchToGeometry } from './mesh-buffer-pool.js';
 
 function chunkKey(cx, cy, cz) {
   return `${cx},${cy},${cz}`;
@@ -81,13 +82,12 @@ function shouldRenderFluidFace(grid, fluidField, fluid, x, y, z, dx, dy, dz) {
 }
 
 function pushQuad(buf, verts, normal, surface) {
-  const base = buf.positions.length / 3;
+  const base = buf.vertexCount;
+  const [nx, ny, nz] = normal;
   for (const [px, py, pz] of verts) {
-    buf.positions.push(px, py, pz);
-    buf.normals.push(...normal);
-    buf.surfaces.push(surface);
+    buf.pushVertex(px, py, pz, nx, ny, nz, 0, 0, 0, 0, 0, surface);
   }
-  buf.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  buf.pushIndexQuad(base);
 }
 
 function getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, cx, y, cz) {
@@ -95,10 +95,15 @@ function getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, cx, y, cz)
   if (cache.has(key)) return cache.get(key);
 
   const h = cornerHeightAt(grid, fluidField, fluid, cx, y, cz);
-  const idx = buf.positions.length / 3;
-  buf.positions.push(cx * VOXEL_SIZE, y * VOXEL_SIZE + h * VOXEL_SIZE, cz * VOXEL_SIZE);
-  buf.normals.push(0, 1, 0);
-  buf.surfaces.push(1);
+  const idx = buf.vertexCount;
+  buf.pushVertex(
+    cx * VOXEL_SIZE,
+    y * VOXEL_SIZE + h * VOXEL_SIZE,
+    cz * VOXEL_SIZE,
+    0, 1, 0,
+    0, 0, 0, 0, 0,
+    1,
+  );
   cache.set(key, idx);
   return idx;
 }
@@ -115,7 +120,8 @@ function appendFluidSurfaceCell(buf, cache, grid, fluidField, fluid, x, y, z) {
   const d = getOrCreateCornerVertex(buf, cache, grid, fluidField, fluid, x, y, z + 1);
 
   // Winding matches +Y faces (seen from above).
-  buf.indices.push(d, c, b, d, b, a);
+  buf.pushIndexTri(d, c, b);
+  buf.pushIndexTri(d, b, a);
 }
 
 /**
@@ -185,8 +191,8 @@ function appendFluidBody(buf, grid, fluidField, fluid, x, y, z) {
   }
 }
 
-function buildFluidChunkBuffers(grid, fluidField, cx, cy, cz, chunkSize) {
-  const buffers = new Map();
+function buildFluidChunkBuffers(pool, grid, fluidField, cx, cy, cz, chunkSize) {
+  pool.beginFrame();
   const cornerCaches = new Map();
   const x0 = cx * chunkSize;
   const y0 = cy * chunkSize;
@@ -205,48 +211,45 @@ function buildFluidChunkBuffers(grid, fluidField, cx, cy, cz, chunkSize) {
         const volume = fluidField.getVolume(x, y, z);
         if (volume <= 0) continue;
 
-        if (!buffers.has(id)) {
-          buffers.set(id, {
-            positions: [],
-            normals: [],
-            surfaces: [],
-            indices: [],
-          });
-          cornerCaches.set(id, new Map());
-        }
+        const buf = pool.get(id);
+        if (!cornerCaches.has(id)) cornerCaches.set(id, new Map());
 
-        const buf = buffers.get(id);
         appendFluidBody(buf, grid, fluidField, fluid, x, y, z);
         appendFluidSurfaceCell(buf, cornerCaches.get(id), grid, fluidField, fluid, x, y, z);
       }
     }
   }
 
-  return buffers;
+  return pool;
 }
 
-function applyBuffersToChunk(chunk, buffers, threeMaterials, cx, cy, cz) {
-  for (const mesh of chunk.meshes.values()) {
+function applyBuffersToChunk(chunk, pool, threeMaterials, cx, cy, cz) {
+  const keep = new Set();
+
+  for (const [id, scratch] of pool.entries()) {
+    if (scratch.posCount === 0) continue;
+    keep.add(id);
+
+    let mesh = chunk.meshes.get(id);
+    if (!mesh) {
+      const geometry = new THREE.BufferGeometry();
+      applyScratchToGeometry(geometry, scratch);
+      mesh = new THREE.Mesh(geometry, threeMaterials.get(id));
+      mesh.renderOrder = 1;
+      mesh.name = `fluid-chunk-${cx},${cy},${cz}-${id}`;
+      chunk.meshes.set(id, mesh);
+      chunk.group.add(mesh);
+    } else {
+      applyScratchToGeometry(mesh.geometry, scratch);
+      mesh.visible = true;
+    }
+  }
+
+  for (const [id, mesh] of chunk.meshes) {
+    if (keep.has(id)) continue;
     mesh.geometry.dispose();
     chunk.group.remove(mesh);
-  }
-  chunk.meshes.clear();
-
-  for (const [id, buf] of buffers) {
-    if (buf.positions.length === 0) continue;
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(buf.positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buf.normals, 3));
-    geometry.setAttribute('aSurface', new THREE.Float32BufferAttribute(buf.surfaces, 1));
-    geometry.setIndex(buf.indices);
-    geometry.computeBoundingSphere();
-
-    const mesh = new THREE.Mesh(geometry, threeMaterials.get(id));
-    mesh.renderOrder = 1;
-    mesh.name = `fluid-chunk-${cx},${cy},${cz}-${id}`;
-    chunk.meshes.set(id, mesh);
-    chunk.group.add(mesh);
+    chunk.meshes.delete(id);
   }
 }
 
@@ -273,6 +276,7 @@ export class FluidMeshBuilder {
     this.flushScheduled = false;
     this.flushFrameId = null;
     this.elapsed = 0;
+    this._scratchPool = new ScratchPool({ hasSurfaces: true });
 
     const { x: sx, y: sy, z: sz } = grid.size;
     this.chunksX = Math.ceil(sx / chunkSize);
@@ -425,7 +429,8 @@ export class FluidMeshBuilder {
 
   rebuildChunk(cx, cy, cz) {
     const chunk = this.getOrCreateChunk(cx, cy, cz);
-    const buffers = buildFluidChunkBuffers(
+    const pool = buildFluidChunkBuffers(
+      this._scratchPool,
       this.grid,
       this.fluidField,
       cx,
@@ -433,7 +438,7 @@ export class FluidMeshBuilder {
       cz,
       this.chunkSize,
     );
-    applyBuffersToChunk(chunk, buffers, this.threeMaterials, cx, cy, cz);
+    applyBuffersToChunk(chunk, pool, this.threeMaterials, cx, cy, cz);
   }
 
   rebuildAll() {
